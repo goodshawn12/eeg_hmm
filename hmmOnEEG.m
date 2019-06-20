@@ -1,5 +1,10 @@
+cd '/home/ting/Documents/eeg_hmm';
+addpath('/home/ting/Documents/eeglab')
 eeglab;
-eegdata = pop_loadset();
+addpath(genpath('HMM-MAR'))
+addpath('/data/projects/Shawn/2019_HMM/data')
+filename = 'session53_ASR20_epoched.set';
+eegdata = pop_loadset(filename);
 
 %% Prepare data
 timepoints = eegdata.data;
@@ -49,11 +54,11 @@ options.onpower = 0;
 options.standardise = 0;
 options.Fs = Fs; 
 options.verbose = 1;
-options.useParallel = 0;
+options.useParallel = 1;
 
 % For TDE: order = 0, zeromean = 1, covtype = 'full'
-options.embeddedlags = -7:7;
-options.order = 0; % no autoregressive components
+% options.embeddedlags = -7:7;
+options.order = 2; % no autoregressive components
 options.zeromean = 1; % model the mean
 options.covtype = 'full'; % full covariance matrix
 
@@ -65,9 +70,9 @@ if use_stochastic
     options.BIGNinitbatch = 15;
     options.BIGNbatch = 15;
     options.BIGtol = 1e-5;
-    options.BIGcyc = 500;
+    options.BIGcyc = 100;
     options.BIGundertol_tostop = 5;
-    options.BIGdelay = 5;
+    %options.BIGdelay = 5;
     options.BIGforgetrate = 0.9;
     options.BIGbase_weights = 0.9;
 end
@@ -75,9 +80,10 @@ end
 options
 
 %% 
+tic
 [hmm, Gamma, Xi, vpath] = hmmmar(X,T,options);
 % [hmm, Gamma,~,~,~,~,fehist] = hmmmar(data,T,options);
-
+toc
 %% plotting results
 figure;
 subplot(2,1,1)
