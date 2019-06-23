@@ -3,7 +3,7 @@ addpath('/home/ting/Documents/eeglab')
 eeglab;
 addpath(genpath('HMM-MAR'))
 addpath('/data/projects/Shawn/2019_HMM/data')
-filename = 'session53_ASR20_epoched.set';
+filename = 'session53_ASR20.set';
 eegdata = pop_loadset(filename);
 
 %% Prepare data
@@ -13,26 +13,37 @@ n_epochs = 1;
 if ~isempty(eegdata.epoch)
     n_epochs = size(eegdata.epoch, 2);
 end
-
 timepoints = eegdata.data;
-timepoints = reshape(timepoints, eegdata.nbchan, []);
-timepoints = timepoints';
-
-size(timepoints)
     
 %% training data setup
 X = [];
 T = [];
-select_portion = 1.0;
-if n_epochs == 1  
-    select_epochs = floor(n_epochs * select_portion);
-    select_time = 1:(select_epochs * epoch_length);
-    X = timepoints(select_time,:);
+select_start = 0.25;
+select_end = 0.75;
+
+if n_epochs > 1
+    start_epoch = floor(n_epochs * select_start);
+    if start_epoch == 0
+        start_epoch = 1;
+    end
+    end_epoch = floor(n_epochs * select_end); 
+    X = timepoints(:,:,start_epoch:end_epoch); 
+    X = reshape(X, eegdata.nbchan, []);
+    X = X';
+    
+    select_epochs = end_epoch - start_epoch + 1;
     T = epoch_length * ones(select_epochs, 1);
 else
-    select_time = 1:floor(epoch_length * select_portion);
-    X = timepoints(select_time,:);
-    T = epoch_length;
+    start_timepoint = floor(epoch_length * select_start);
+    if start_timepoint == 0
+        start_timepoint = 1;
+    end
+    end_timepoint = floor(epoch_length * select_end);    
+    X = timepoints(:,start_timepoint:end_timepoint);
+    X = X';
+    
+    select_timepoints = end_timepoint - start_timepoint + 1;
+    T = select_timepoints;
 end
 
 %% training parameters setup
@@ -40,7 +51,6 @@ end
 % or segments for all subjects) containing the length of each trial/segment/subject, or 
 % a (no. of subjects X 1) cell with each element containing a vector (no. of trials X 1) 
 % reflecting the length of the trials for that particular subject.
-
 K = 3; 
 use_stochastic = 1;
 method = 'MAR';
@@ -54,9 +64,10 @@ options.standardise = 0;
 options.onpower = 0;
 
 if strcmp(method,'MAR')
-    options.order = 2;
+    options.order = 3;
     options.zeromean = 1;
     options.covtype = 'diag';
+    options.DirichletDiag = 250;
 elseif strcmp(method, 'TDE')
     % For TDE: order = 0, zeromean = 1, covtype = 'full'
     options.embeddedlags = -7:7;
