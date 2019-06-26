@@ -6,7 +6,7 @@ addpath('/data/projects/Shawn/2019_HMM/data')
 filename = 'session53_ASR20.set';
 eegdata = pop_loadset(filename);
 
-%% Prepare data
+%% Prepare raw data
 Fs = eegdata.srate;
 epoch_length = eegdata.pnts;
 n_epochs = 1;
@@ -15,11 +15,11 @@ if ~isempty(eegdata.epoch)
 end
 timepoints = eegdata.data;
     
-%% training data setup
+%% Prepare training data
 X = [];
 T = [];
-select_start = 0.25;
-select_end = 0.75;
+select_start = 0;
+select_end = 1;
 
 if n_epochs > 1
     start_epoch = floor(n_epochs * select_start);
@@ -46,7 +46,7 @@ else
     T = select_timepoints;
 end
 
-%% training parameters setup
+%% Prepare training parameters
 % Regarding T, it can be either a (N X 1) vector (where N is the total number of trials 
 % or segments for all subjects) containing the length of each trial/segment/subject, or 
 % a (no. of subjects X 1) cell with each element containing a vector (no. of trials X 1) 
@@ -55,19 +55,29 @@ K = 3;
 use_stochastic = 1;
 method = 'MAR';
 
+cyc = 100;
+tol = 1e-5;
+initrep = 3;
+initcycle = 50;
+
 options = struct();
 options.K = K; % number of states 
 options.Fs = Fs; 
 options.verbose = 1;
-options.useParallel = 1;
+options.useParallel = 0;
 options.standardise = 0;
 options.onpower = 0;
 
+options.cyc = cyc;
+options.tol = tol;
+options.initrep = initrep;
+options.initcyc = initcycle;
+
 if strcmp(method,'MAR')
-    options.order = 3;
+    options.order = 1;
     options.zeromean = 1;
     options.covtype = 'diag';
-    options.DirichletDiag = 250;
+    options.DirichletDiag = 100;
 elseif strcmp(method, 'TDE')
     % For TDE: order = 0, zeromean = 1, covtype = 'full'
     options.embeddedlags = -7:7;
@@ -84,21 +94,47 @@ end
 if use_stochastic && n_epochs > 1
     options.BIGNinitbatch = 15;
     options.BIGNbatch = 15;
-    options.BIGtol = 1e-5;
-    options.BIGcyc = 100;
+    options.BIGtol = tol;
+    options.BIGcyc = cyc;
+    options.BIGinitrep = initrep;
     options.BIGundertol_tostop = 5;
-    %options.BIGdelay = 5;
     options.BIGforgetrate = 0.7;
     options.BIGbase_weights = 0.9;
 end
 
-%% 
+%% Train
+
+% while isfile(result_file_name)
+%     file_number_start = length(result_file_name) - length('00.mat') + 1;
+%     trial_number = extractBetween(result_file_name, file_number_start, file_number_start + 1);
+%     trail_number = trial_number{1,1};
+%     new_trial_number = num2str(str2num(trial_number) + 1);
+%     insertBefore(result_file_name, '.mat', new_trial_number);
+% end
+
+result_file_name = strcat(method,'_',extractBefore(filename,'.set'),'_01','.mat');
+if isfile(result_file_name)
+    error('Duplicate output file name')
+end
+
 options
-tic
+start_time = tic;
 [hmm, Gamma, Xi, vpath] = hmmmar(X,T,options);
-% [hmm, Gamma,~,~,~,~,fehist] = hmmmar(data,T,options);
-toc
-%% plotting results
+time_elapsed = toc(start_time)
+
+result = struct();
+result.hmm = hmm;
+result.Gamma = Gamma;
+result.Xi = Xi;
+result.vpath = vpath;
+result.time_elapsed = 0;
+result.options = options;
+result.select_start = select_start;
+result.select_end = select_end;
+
+save(result_file_name, '-struct', 'result');
+
+%% Plotting paths
 figure;
 subplot(2,1,1)
 plot(Gamma(:,:)), set(gca,'Title',text('String','Estimated state path'))
@@ -109,11 +145,38 @@ plot(vpath(:)), set(gca,'Title',text('String','Viterbi path'))
 set(gca,'ylim',[0 hmm.K+1]); ylabel('state #')
 
 % saveas(gcf, 'TDE001_path.jpg')
-%% Colormap
+%% Colormap by epochs
+state_by_epoch = [];
+if n_epochs > 1
+    figure;
+    state_by_epoch = (reshape(vpath, [], size(Gamma, 1)/n_epochs));
+    imagesc(state_by_epoch);
+    set(gca,'Title',text('String','State arranged by epochs'))
+    colormap(parula)
+else
+    zero_padded_vpath = [zeros(size(X,1)-size(vpath,1),1); vpath];
+    
+    all_events = eegdata.event;
+    epoch_start_offset = -2 * Fs;
+    epoch_end_offset = 4 * Fs;
+    state_by_epoch = zeros(length(all_events), epoch_end_offset - epoch_start_offset);
+    
+    for i = 1:length(eegdata.event)
+        event = all_events(i);
+        sliced_epoch_start = epoch_start_offset + event.latency;
+        sliced_epoch_end = epoch_end_offset + event.latency -1;
+        if strcmp(event.type, '253') && ...
+            sliced_epoch_start >= start_timepoint && ...
+            sliced_epoch_end <= end_timepoint
+            sliced_epoch = ...
+                zero_padded_vpath(sliced_epoch_start:sliced_epoch_end);
+            state_by_epoch(i,:) = sliced_epoch';
+        end
+    end
+    state_by_epoch(~any(state_by_epoch,2),:) = [];
+end
+
 figure;
-state_by_epochs = (reshape(vpath, [], size(Gamma, 1)/n_epochs));
-imagesc(state_by_epochs);
+imagesc(state_by_epoch);
 set(gca,'Title',text('String','State arranged by epochs'))
 colormap(parula)
-
-% saveas(gcf, 'TDE001_epochs.jpg')
