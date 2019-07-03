@@ -107,17 +107,8 @@ end
 % parpool(8);   % request 8 workers from the cluster
 % parfor par_id = 1:npar ...
 
-
-% while isfile(result_file_name)
-%     file_number_start = length(result_file_name) - length('00.mat') + 1;
-%     trial_number = extractBetween(result_file_name, file_number_start, file_number_start + 1);
-%     trail_number = trial_number{1,1};
-%     new_trial_number = num2str(str2num(trial_number) + 1);
-%     insertBefore(result_file_name, '.mat', new_trial_number);
-% end
-
-result_file_name = strcat(method,'_',extractBefore(filename,'.set'),'_04','.mat');
-if isfile(result_file_name)
+result_file_name = strcat(method,'_',extractBefore(filename,'.set'),'_03','.mat');
+if isfile(strcat('results/',result_file_name))
     error('Duplicate output file name')
 end
 
@@ -136,8 +127,9 @@ result.time_elapsed = 0;
 result.options = options;
 result.select_start = select_start;
 result.select_end = select_end;
+result.training_data_size = size(X);
 
-save(result_file_name, '-struct', 'result');
+save(strcat('results/',result_file_name), '-struct', 'result');
 
 %% Plotting paths
 figure;
@@ -149,7 +141,6 @@ subplot(2,1,2)
 plot(vpath(:)), set(gca,'Title',text('String','Viterbi path'))
 set(gca,'ylim',[0 hmm.K+1]); ylabel('state #')
 
-% saveas(gcf, 'TDE001_path.jpg')
 %% Colormap by epochs
 state_by_epoch = [];
 if n_epochs > 1
@@ -167,7 +158,7 @@ else
     state_by_epoch = zeros(length(all_events), epoch_end_offset - epoch_start_offset);
     
     rt = [];
-    rt_off = []
+    rt_off = [];
     for i = 1:length(eegdata.event)
         event = all_events(i);
         sliced_epoch_start = epoch_start_offset + event.latency;
@@ -178,8 +169,7 @@ else
         
             rt = [rt, (all_events(i+1).latency-all_events(i).latency)];
             rt_off = [rt_off, (all_events(i+2).latency-all_events(i).latency)];
-            sliced_epoch = ...
-                zero_padded_vpath(sliced_epoch_start:sliced_epoch_end);
+            sliced_epoch = zero_padded_vpath(sliced_epoch_start:sliced_epoch_end);
             state_by_epoch(i,:) = sliced_epoch';
         end
     end
