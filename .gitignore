@@ -1,3 +1,5 @@
 *.mat
 *.m~
 results/
+figures/
+graphs/
