@@ -1,69 +1,68 @@
 cd '/home/ting/Documents/eeg_hmm';
 addpath('/home/ting/Documents/eeglab')
-eeglab;
 addpath(genpath('HMM-MAR'))
-addpath('/data/projects/Shawn/2016 JNE/dataset')
+addpath('/data/projects/Shawn/2019_HMM/data')
 %/data/projects/Shawn/2016 JNE/dataset
 
 %% Indexing datafile
-data_base_dir = '/data/projects/Shawn/2016 JNE/dataset/';
-data_filelist = dir(strcat(data_base_dir, '*.set'));
+data_base_dir = '/data/projects/Shawn/2019_HMM/data/';
+% data_nase_dir = '/data/projects/Shawn/2016 JNE/dataset/';
 
+data_filelist = dir(strcat(data_base_dir, '*.set'));
 data_filenames = {};
+output_filenames = {};
 for i = 1:length(data_filelist)
-    data_filenames{i} = data_filelist(i).name;
+    filename = data_filelist(i).name;
+    output_filename = split(filename, '.');
+    output_filename = output_filename{1};
+      
+    data_filenames{i} = filename;
+    output_filenames{i} = output_filename;
 end
 
+data_filenames = data_filenames(~cellfun('isempty', data_filenames));
+output_filenames = output_filenames(~cellfun('isempty', output_filenames));
+n_of_files = length(data_filenames);
 %% Prepare raw data
-Fs = 250;
-n_epoch = 1;
-select_start = 0;
-select_end = 1;
-
-eegdata_list = {};
-T_list = {};
-for i = 1:length(data_filenames)
+eegdata_list = cell(1, n_of_files);
+eeglab;
+for i = 1:n_of_files
     filename = data_filenames{i};
     eegdata_list{i} = pop_loadset(filename);
-    T_list{i} = eegdata_list{i}.pnts;
 end
 
-%% Remove session 53
-% eegdata_list{8} = [];
-% T_list{8} = [];
-% eegdata_list = eegdata_list(~cellfun('isempty', eegdata_list));
-% T_list = T_list(~cellfun('isempty', T_list));
-
-%%
-data_filenames{8} = [];
-data_filenames = data_filenames(~cellfun('isempty', data_filenames));
 %% Prepare global training parameters
 % Regarding T, it can be either a (N X 1) vector (where N is the total number of trials 
 % or segments for all subjects) containing the length of each trial/segment/subject, or 
 % a (no. of subjects X 1) cell with each element containing a vector (no. of trials X 1) 
 % reflecting the length of the trials for that particular subject.
-K = 3; 
-use_stochastic = 0;
-method = 'TDE';
+n_epoch = 1;
+select_start = 0;
+select_end = 1;
+Fs = 250;
 
-cyc = 100;
-tol = 1e-5;
-initrep = 3;
-initcycle = 50;
+K = 5; 
+use_stochastic = 0;
+method = 'GAU';
+
+% cyc = 1000;
+% tol = 1e-5;
+% initrep = 3;
+% initcycle = 50;
 
 options = struct();
-options.K = K; % number of states 
-options.Fs = Fs; 
+options.K = K; % number of states
+options.Fs = Fs;
 options.verbose = 1;
 options.useParallel = 0;
 options.standardise = 0;
 options.onpower = 0;
-options.DirichletDiag = 100;
+% options.DirichletDiag = 100;
 
-options.cyc = cyc;
-options.tol = tol;
-options.initrep = initrep;
-options.initcyc = initcycle;
+% options.cyc = cyc;
+% options.tol = tol;
+% options.initrep = initrep;
+% options.initcyc = initcycle;
 
 if strcmp(method,'MAR')
     options.order = 1;
@@ -79,7 +78,7 @@ elseif strcmp(method, 'GAU')
     options.order = 0;
     options.zeromean = 0;
     options.covtype = 'full';     
-    options.onpower = 1; 
+    options.onpower = 1;
 elseif strcmp(method, 'MIX')
     % default
 end
@@ -97,17 +96,22 @@ end
 
 %% Train
 delete(gcp('nocreate')); % shut down any current pool
-npar = size(eegdata_list, 2);
+npar = 27;
 parpool(npar);   % request workers from the cluster
 
-results_list = {};
+options_list = repmat(options, 1, n_of_files);
+results_list = cell(1, n_of_files);
 results_list_header = {'hmm', 'Gamma', 'Xi', 'vpath', 'fehist', ...
     'time_elapsed', 'select_start', 'select_end', 'training_data_size'};
 
-parfor par_id = 1:npar
+parfor (idx = 1:n_of_files, npar)
+    X = transpose(eegdata_list{idx}.data);
+    T = eegdata_list{idx}.pnts;
+    Fs = eegdata_list{idx}.srate;
+    options_list(idx).Fs = Fs;
+    
     start_time = tic;
-    [hmm, Gamma, Xi, vpath, ~, ~, fehist] = ...
-        hmmmar(transpose(eegdata_list{par_id}.data), T_list{par_id}, options);
+    [hmm, Gamma, Xi, vpath, ~, ~, fehist] = hmmmar(X, T, options_list(idx));
     time_elapsed = toc(start_time)
 
     % save output and meta data
@@ -120,24 +124,25 @@ parfor par_id = 1:npar
     result.time_elapsed = time_elapsed;
     result.select_start = select_start;
     result.select_end = select_end;
-    result.training_data_size = [eegdata_list{par_id}.pnts eegdata_list{par_id}.nbchan];
+    result.training_data_size = size(X);
     
-    results_list{par_id} = result;   
+    results_list{idx} = result;   
 end
 
 fprintf('Training done');
 
-for i = 1:length(results_list)
+for idx = 1:n_of_files
     % Find the first non-duplicate filename
     fileindex = 0;
-    result_filename_prefix = strcat(method,'_',extractBefore(data_filenames{i},'.set'),'_');
-    result_filename = strcat(result_filename_prefix,num2str(fileindex),'.mat');
-    while isfile(strcat('results/',result_filename))
+    result_filename_prefix = strcat(method, '_', output_filenames{idx});
+    result_filename = strcat(result_filename_prefix, '_', num2str(fileindex), '.mat');
+    while isfile(strcat('results_K5/',result_filename))
         fileindex = fileindex + 1;
-        result_filename = strcat(result_filename_prefix,num2str(fileindex),'.mat');
+        result_filename = strcat(result_filename_prefix, '_', num2str(fileindex), '.mat');
     end
     
-    result = results_list{i};
-    save(strcat('results/', result_filename), '-struct', 'result');
+    result = results_list{idx};
+    save(strcat('results_K5/', result_filename), '-struct', 'result');
 end
 
+delete(gcp('nocreate'));
