@@ -43,7 +43,7 @@ Fs = 250;
 
 K = 5; 
 use_stochastic = 0;
-method = 'GAU';
+method = 'MAR';
 
 % cyc = 1000;
 % tol = 1e-5;

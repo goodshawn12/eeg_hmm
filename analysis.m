@@ -1,5 +1,6 @@
 addpath('/home/ting/Documents/eeglab');
-addpath('/home/ting/Documents/eeg_hmm')
+addpath('/home/ting/Documents/eeg_hmm');
+addpath(genpath('/home/ting/Documents/eeg_hmm/Utility'));
 addpath(genpath('/home/ting/Documents/eeg_hmm/HMM-MAR'));
 addpath('/data/projects/Shawn/2016 JNE/dataset/');
 addpath('/data/projects/Shawn/2019_HMM/data/');
@@ -23,7 +24,6 @@ filename_list = filename_list(~cellfun('isempty', filename_list));
 filename_list = unique(filename_list, 'stable');
 
 n_of_files = length(filename_list);
-
 
 %% Prepare raw data
 n_epochs = 1;
@@ -278,6 +278,7 @@ end
 
 results = deleteVars(results, 'overall_state_prob_list');
 results = addvars(results, overall_state_prob_list);
+
 %% ######## Graphing Sections ########
 %########################################
 % Preparation
@@ -285,10 +286,13 @@ cd 'graphs';
 
 if K == 4
     cmap = [1,0.1,0.1; 1,1,0.1; 0.1,1,0.1; 0.1,0.1,1];
+    state_description = {'Drowsy', 'Middle1', 'Middle2', 'Alert'};
 elseif K == 3
     cmap = [1,0.1,0.1; 0.1,1,0.1; 0.1,0.1,1];
+    state_description = {'Drowsy', 'Middle1', 'Alert'};
 elseif K == 2
     cmap = [1,0.1,0.1; 0.1,0.1,1];
+    state_description = {'Drowsy', 'Alert'};
 else
     cmap = parula;
 end
@@ -345,8 +349,18 @@ visible = 'off';
 % saveas(gcf, strcat('20_RT_vs_State_box_', num2str(window_time_sec), 'sec.fig'));
 
 %% Colormap by epochs timelock at events
-visible = 'off';
-toSave = 1;
+visible = 'on';
+toSave = 0;
+raw = 1;
+if raw
+    smoothing_window_len = 1;
+    thin_line_width = 0.01;
+    thick_line_width = 0.01;
+else
+    smoothing_window_len = 5;
+    thin_line_width = 0.01;
+    thick_line_width = 2;
+end
 
 % Timelock 251/252, lane-departure task introduced
 epoch_start_offset_251 = -2 * Fs;
@@ -360,8 +374,12 @@ epoch_end_offset_253 = 3 * Fs;
 epoch_start_offset_254 = -4 * Fs;
 epoch_end_offset_254 = 2 * Fs;
 
-for idx = 1:n_of_files
-    smoothed_vpath = results{idx, 'smoothed_vpath_list'}{1};
+for idx = 24:24
+    if raw
+        smoothed_vpath = results{idx, 'vpath_list'}{1};
+    else
+        smoothed_vpath = results{idx, 'smoothed_vpath_list'}{1};
+    end    
     training_data_size = results{idx, 'epoch_length_list'}{1};
     start_timepoint = results{idx, 'timepoint_start_list'}{1};
     end_timepoint = results{idx, 'timepoint_end_list'}{1};
@@ -375,8 +393,6 @@ for idx = 1:n_of_files
     filename = filename{1}
     
     zero_padded_vpath = [zeros(training_data_size(1)-size(smoothed_vpath,1),1); smoothed_vpath];
-    
-    smoothing_window_len = 5;
     cmap = cmap_list(:,:,idx);
     
     % Prevent epoch exceeding vpath dimension
@@ -385,12 +401,18 @@ for idx = 1:n_of_files
     rt(removeIndex) = [];
     rt_off(removeIndex) = [];
     rt_latency(removeIndex) = [];
+
     [sortedRT, sortIdx] = sort(rt);
     sortedRT_off = rt_off(:, sortIdx);
-    sortedRT_latency = rt_latency(:, sortIdx);
+    
+    if raw
+        sortedRT = rt;
+        sortedRT_off = rt_off;
+        sortIdx = 1:length(rt);
+    end
     
     % Plot 251/252
-    state_by_epoch = epochByEvent(zero_padded_vpath, rt_latency, epoch_start_offset_251, epoch_end_offset_251);   
+    state_by_epoch = epochByEvent(zero_padded_vpath, rt_latency, epoch_start_offset_251, epoch_end_offset_251);    
     state_by_epoch = state_by_epoch(sortIdx,:);
     state_by_epoch = movingModeSmoothing(state_by_epoch, smoothing_window_len, 1, 1:K); 
     
@@ -405,8 +427,8 @@ for idx = 1:n_of_files
 
     hold on,
     line([-epoch_start_offset_251, -epoch_start_offset_251], [1, length(rt)], 'linewidth',2,'color','k');
-    plot(sortedRT-epoch_start_offset_251, 1:length(rt), 'linewidth',2,'color','w');
-    plot(sortedRT_off-epoch_start_offset_251, 1:length(rt), 'linewidth',0.01,'color', [0.8, 0.8, 0.8]);
+    plot(sortedRT-epoch_start_offset_251, 1:length(rt), 'linewidth',thick_line_width,'color','w');
+    plot(sortedRT_off-epoch_start_offset_251, 1:length(rt), 'linewidth',thin_line_width,'color', [0.8, 0.8, 0.8]);
   
     if toSave
         set(gcf, 'PaperPositionMode', 'auto');
@@ -429,9 +451,9 @@ for idx = 1:n_of_files
     colormap(cmap);
 
     hold on,
-    plot(-epoch_start_offset_253 - sortedRT, 1:length(rt), 'linewidth',2,'color','k')
+    plot(-epoch_start_offset_253 - sortedRT, 1:length(rt), 'linewidth',thick_line_width,'color','k')
     line([-epoch_start_offset_253, -epoch_start_offset_253], [1, length(rt)],'linewidth',2,'color','w')
-    plot(-epoch_start_offset_253 - sortedRT+sortedRT_off, 1:length(rt), 'linewidth',0.01,'color',[0.8,0.8,0.8])
+    plot(-epoch_start_offset_253 - sortedRT+sortedRT_off, 1:length(rt), 'linewidth',thin_line_width,'color',[0.8,0.8,0.8])
 
     if toSave
         set(gcf, 'PaperPositionMode', 'auto');
@@ -454,8 +476,8 @@ for idx = 1:n_of_files
     colormap(cmap);
 
     hold on,
-    plot(-epoch_start_offset_254 - sortedRT_off, 1:length(rt), 'linewidth',0.01,'color','k')
-    plot(-epoch_start_offset_254 - sortedRT_off+sortedRT, 1:length(rt), 'linewidth',0.01,'color','w')
+    plot(-epoch_start_offset_254 - sortedRT_off, 1:length(rt), 'linewidth',thin_line_width,'color','k')
+    plot(-epoch_start_offset_254 - sortedRT_off+sortedRT, 1:length(rt), 'linewidth',thin_line_width,'color','w')
     line([-epoch_start_offset_254, -epoch_start_offset_254], [1, length(rt)], 'linewidth',2,'color',[0.8,0.8,0.8])
     
     if toSave
@@ -678,41 +700,36 @@ end
 % t = uitable('Data', results.overall_state_prob_list, 'ColumnName', {'State 1', 'State 2', 'State 3'}, 'RowName', results.filename_list);
 % t.Position(3:4) = t.Extent(3:4);
 
-%% ######## Cross-session Analysis #########
-%###########################################
-
-% Analyze all Gaussian models
-n_of_gaussian = 19;
 
 %% Heatmap overall state probability
-figure;
-heatmap({'1','2','3'}, results.session_name_list, round(results.overall_state_prob_list, 3));
-title('Overall State Probability');
-xlabel('State');
+% figure;
+% heatmap({'1','2','3'}, results.session_name_list, round(results.overall_state_prob_list, 3));
+% title('Overall State Probability');
+% xlabel('State');
 
 %% Get top model specific state probability trial
-drowsy_top5_trial_r_list = zeros(n_of_files, 1);
-drowsy_top30_trial_r_list = zeros(n_of_files, 1);
-alert_top5_trial_r_list = zeros(n_of_files, 1);
-alert_top30_trial_r_list = zeros(n_of_files, 1);
-top = 1:5;
-wide_top = 1:100;
-
-for idx = 1:n_of_files
-    trial_Gamma_mean = results{idx, 'trial_Gamma_mean_list'}{1};
-    state_type_index = results{idx, 'permutation_list'};
-    rs = results{idx, 'rt_speed_clean_list'}{1};
-    
-    drowsy_index = state_type_index(1);
-    alert_index = state_type_index(3);
-    [sorted_drowsy_mean, drowsy_sort_index] = sort(trial_Gamma_mean(:, drowsy_index), 1);
-    [sorted_alert_mean, alert_sort_index] = sort(trial_Gamma_mean(:, alert_index), 1);
-    
-    drowsy_top5_trial_r_list(idx) = corr(sorted_drowsy_mean(top, :), rs(drowsy_sort_index(top))');
-    drowsy_top30_trial_r_list(idx) = corr(sorted_drowsy_mean(wide_top, :), rs(drowsy_sort_index(wide_top))');
-    alert_top5_trial_r_list(idx) = corr(sorted_alert_mean(top, :), rs(alert_sort_index(top))');
-    alert_top30_trial_r_list(idx) = corr(sorted_alert_mean(wide_top, :), rs(alert_sort_index(wide_top))');      
-end
+% drowsy_top5_trial_r_list = zeros(n_of_files, 1);
+% drowsy_top30_trial_r_list = zeros(n_of_files, 1);
+% alert_top5_trial_r_list = zeros(n_of_files, 1);
+% alert_top30_trial_r_list = zeros(n_of_files, 1);
+% top = 1:5;
+% wide_top = 1:100;
+% 
+% for idx = 1:n_of_files
+%     trial_Gamma_mean = results{idx, 'trial_Gamma_mean_list'}{1};
+%     state_type_index = results{idx, 'permutation_list'};
+%     rs = results{idx, 'rt_speed_clean_list'}{1};
+%     
+%     drowsy_index = state_type_index(1);
+%     alert_index = state_type_index(3);
+%     [sorted_drowsy_mean, drowsy_sort_index] = sort(trial_Gamma_mean(:, drowsy_index), 1);
+%     [sorted_alert_mean, alert_sort_index] = sort(trial_Gamma_mean(:, alert_index), 1);
+%     
+%     drowsy_top5_trial_r_list(idx) = corr(sorted_drowsy_mean(top, :), rs(drowsy_sort_index(top))');
+%     drowsy_top30_trial_r_list(idx) = corr(sorted_drowsy_mean(wide_top, :), rs(drowsy_sort_index(wide_top))');
+%     alert_top5_trial_r_list(idx) = corr(sorted_alert_mean(top, :), rs(alert_sort_index(top))');
+%     alert_top30_trial_r_list(idx) = corr(sorted_alert_mean(wide_top, :), rs(alert_sort_index(wide_top))');      
+% end
 
 %% Plotting transition probability matrix
 visible = 'off';
@@ -755,11 +772,12 @@ set(0, 'ShowHiddenHandles', 'on');
 for idx = 1:n_of_files
     hmm = results{idx, 'hmm_list'}{1};
     chanlocs = results{idx, 'chanlocs_list'}{1};
+    permutation_list = results{idx, 'permutation_list'};
     filename = results{idx, 'filename_list'}{1};
     filename = split(filename, '.');
     filename = filename{1}
         
-    for state = 1:K
+    for state = permutation_list
         data = getFuncConn(hmm, state);
         data = reshape(normalize(reshape(data, 1, [])), size(data));
         
@@ -769,7 +787,8 @@ for idx = 1:n_of_files
         close(allhandles(cgfigidx));
         
         [~, perm] = ismember(get(cg, 'ColumnLabels'), chanlocs);        
-        data = data(perm, perm);        
+        data = data(perm, perm);
+        chanlocs = chanlocs(perm);
         cg = clustergram(data, 'Cluster', 2, 'Colormap', redblue, 'Dendrogram', 'default', ...
             'ColumnLabels', chanlocs, 'ColumnLabelsRotate', 60, 'RowLabels', chanlocs);
         allhandles = get(0, 'Children');
@@ -777,7 +796,7 @@ for idx = 1:n_of_files
         cgfighandle = allhandles(cgfigidx);
         cgfighandle = cgfighandle(end);
         set(cgfighandle, 'Position', [100 100 500 500]);
-        addTitle(cg, strcat('Functional Connectivity of state', ' ', num2str(state)));
+        addTitle(cg, strcat('Functional Connectivity of state', {' '}, state_description{state}));
         
         % Create colorbar
         cbButton = findall(cgfighandle, 'tag', 'HMInsertColorbar');
@@ -787,9 +806,44 @@ for idx = 1:n_of_files
         cgfighandle.Visible = isVisible;
         
         if toSave
-            output_filename = strcat(filename, '_', 'FunConn', '_', num2str(state));
+            output_filename = strcat(filename, '_', 'FunConn', '_', state_description{state});
             set(cgfighandle, 'PaperPositionMode', 'auto');
             saveas(cgfighandle, strcat(output_filename,'.fig'))
+            print(output_filename, '-djpeg')
+        end
+        
+    end
+end
+
+set(0, 'ShowHiddenHandles', 'off');
+
+%% Plot dendrograms of covariance matrix
+isVisible = "off";
+toSave = 1;
+
+for idx = 1:n_of_files
+    hmm = results{idx, 'hmm_list'}{1};
+    chanlocs = results{idx, 'chanlocs_list'}{1};
+    permutation_list = results{idx, 'permutation_list'};
+    filename = results{idx, 'filename_list'}{1};
+    filename = split(filename, '.');
+    filename = filename{1}
+        
+    for state = permutation_list
+        data = getFuncConn(hmm, state);
+%         data = reshape(quantilenorm(reshape(data, [], 1)), size(data,1), []);
+        figure('Visible', isVisible);
+        imagesc(data);
+        colormap(redblue); colorbar;
+        set(gca, 'YDir', 'normal');
+        set(gca, 'XTick', 1:length(chanlocs), 'XTickLabel', chanlocs, 'XTickLabelRotation', 60);
+        set(gca, 'YTick', 1:length(chanlocs), 'YTickLabel', chanlocs);
+        title(strcat('Functional Connectivity of state', {' '}, state_description{state}));
+        
+        if toSave
+            output_filename = strcat(filename, '_', 'FunConnRaw', '_', state_description{state});
+            set(gcf, 'PaperPositionMode', 'auto');
+%             saveas(cgfighandle, strcat(output_filename,'.fig'))
             print(output_filename, '-djpeg')
         end
         

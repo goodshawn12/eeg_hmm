@@ -1,3 +1,5 @@
 *.mat
 *.m~
 */
+!/Utility
+!/code\ archive
