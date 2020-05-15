@@ -6,7 +6,7 @@ addpath('/data/projects/Shawn/2016 JNE/dataset/');
 addpath('/data/projects/Shawn/2019_HMM/data/');
 
 %% Load all trained data
-method = 'MAR';
+method = 'GAU';
 K_set = 2:5;
 n_of_states = length(K_set);
 n_of_files = 0;
@@ -207,50 +207,156 @@ for state_idx = 1:n_of_states
     all_results{state_idx, 'results_list'}{1} = results;
 end
 
-% %% Calculate state correlation with ERP
-% state_r_list = zeros(n_of_files, K);
-% trial_Gamma_mean_list = cell(n_of_files, 1);
-% win_len_sec = 2;
-% 
-% for idx = 1:n_of_files
-%     Fs = results{idx, 'Fs_list'}{1};
-%     Gamma = results{idx, 'Gamma_list'}{1};
-%     rt_speed = results{idx, 'rt_speed_clean_list'}{1};
-%     rt_latency = results{idx, 'rt_latency_clean_list'}{1};
-%     
-%     win_offset = -win_len_sec * Fs;
-%     win_Gamma_mean = zeros(length(rt_latency), K);    
-%     for row = 1:length(win_Gamma_mean)
-%         latency = rt_latency(row);
-%         win_Gamma_mean(row,:) = mean(Gamma(latency+win_offset:latency,:),1);
-%     end
-%   
-%     trial_Gamma_mean_list{idx} = win_Gamma_mean;
-%     for state = 1:K
-%         state_r_list(idx, state) = round(corr(win_Gamma_mean(:,state), rt_speed'), 3);
-%     end
-% end
-% 
-% % The sort is in ascending order so the first index in the permutation_list
-% % marks the lowest correlation (drowsy model) 
-% [~, permutation_list] = sort(state_r_list, 2);
-% inverse_permutation_list = zeros(size(permutation_list));
-% for row=1:size(permutation_list,1)
-%     inverse_permutation_list(row, permutation_list(row,:)) = 1:size(permutation_list,2);
-% end
-% 
-% results = deleteVars(results, {'trial_Gamma_mean_list', 'state_r_list', 'permutation_list', 'inverse_permutation_list'});
-% results = addvars(results, trial_Gamma_mean_list, state_r_list, permutation_list, inverse_permutation_list);
+%% Global smoothed state correlation with ERP
+win_len_sec = 2;
+smoothing_range_sec = 90;
 
+for state_idx = 1:n_of_states
+    K = K_set(state_idx);
+    smoothed_state_r_list = zeros(n_of_files, K);
+    smoothed_Gamma_median_list = cell(n_of_files, 1);
+    results = all_results{state_idx, 'results_list'}{1};
+    
+    for idx = 1:n_of_files
+        Fs = meta_info{idx, 'Fs_list'}{1};
+        Gamma = results{idx, 'Gamma_list'}{1};
+        rt_speed = meta_info{idx, 'rt_speed_clean_list'}{1};
+        rt_latency = meta_info{idx, 'rt_latency_clean_list'}{1};
 
-%%
+        win_offset = -win_len_sec * Fs;
+        win_Gamma_mean = zeros(length(rt_latency), K);    
+        for row = 1:length(win_Gamma_mean)
+            latency = rt_latency(row);
+            win_Gamma_mean(row,:) = mean(Gamma(latency+win_offset:latency,:),1);
+        end
+
+        % smooth using 90 sec window
+        facing_trial_num_list = zeros(length(rt_latency), 1);
+        smoothing_range_offset = (smoothing_range_sec - win_len_sec) * Fs;
+        offset_latency = rt_latency - smoothing_range_offset;
+        for trial = 2:length(rt_latency)
+            trial_facing_threshold = offset_latency(trial);
+            facing_trial_num = 0;
+            facing_trial_index = trial - facing_trial_num - 1;
+            while trial_facing_threshold < rt_latency(facing_trial_index)
+                facing_trial_num = facing_trial_num + 1;
+                facing_trial_index = facing_trial_index - 1;
+                if facing_trial_index < 1
+                    break;
+                end
+            end
+            facing_trial_num_list(trial) = facing_trial_num;
+        end
+        smoothed_Gamma_median = zeros(length(rt_latency), K);
+        for row = 1:length(smoothed_Gamma_median)
+            trials_selection = (row - facing_trial_num_list(row)):row;
+            smoothed_Gamma_median(row, :) = median(win_Gamma_mean(trials_selection,:), 1);
+        end    
+
+        smoothed_Gamma_median_list{idx} = smoothed_Gamma_median;
+        for state = 1:K
+            smoothed_state_r_list(idx, state) = round(corr(smoothed_Gamma_median(:, state), rt_speed'), 3);
+        end
+    end
+
+    [~, smoothed_permutation_list] = sort(smoothed_state_r_list, 2);
+    smoothed_inverse_permutation_list = zeros(size(smoothed_permutation_list));
+    for row=1:size(smoothed_permutation_list,1)
+        smoothed_inverse_permutation_list(row, smoothed_permutation_list(row,:)) = 1:size(smoothed_permutation_list,2);
+    end
+
+    results = deleteVars(results, {'smoothed_Gamma_median_list', 'smoothed_state_r_list', 'smoothed_permutation_list', 'smoothed_inverse_permutation_list'});
+    results = addvars(results, trial_Gamma_mean_list, smoothed_Gamma_median_list, smoothed_state_r_list, smoothed_permutation_list, smoothed_inverse_permutation_list);
+
+    all_results{state_idx, 'results_list'}{1} = results;
+end
+
+%% Global movmean correlation
+for state_idx = 1:n_of_states
+    K = K_set(state_idx);
+    results = all_results{state_idx, 'results_list'}{1};
+
+    movmean_state_r_list = zeros(n_of_files, K);
+
+    for idx = 1:n_of_files
+        Fs = meta_info{idx, 'Fs_list'}{1};
+        Gamma = results{idx, 'Gamma_list'}{1};
+        rs = transpose(meta_info{idx, 'rt_speed_clean_list'}{1});
+        rt_latency = meta_info{idx, 'rt_latency_clean_list'}{1};    
+
+        win_len = Fs * 30;
+        smoothed_Gamma = movmean(Gamma, win_len, 1);
+
+        rs_valid_range = rt_latency(1):rt_latency(end);
+        rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
+        smoothed_rs = movmean(rs_interpolation, win_len);
+
+        for state = 1:K
+            movmean_state_r_list(idx, state) = corr(smoothed_Gamma(rs_valid_range,state), smoothed_rs);
+        end    
+    end
+
+    % The sort is in ascending order so the first index in the permutation_list
+    % marks the lowest correlation (drowsy model) 
+    [~, movmean_permutation_list] = sort(movmean_state_r_list, 2);
+    movmean_inverse_permutation_list = zeros(size(movmean_permutation_list));
+    for row=1:size(movmean_permutation_list,1)
+        movmean_inverse_permutation_list(row, movmean_permutation_list(row,:)) = 1:size(movmean_permutation_list,2);
+    end
+
+    results = deleteVars(results, {'movmean_state_r_list', 'movmean_inverse_permutation_list'});
+    results = addvars(results, movmean_state_r_list, movmean_inverse_permutation_list);
+
+    all_results{state_idx, 'results_list'}{1} = results;
+end
+
+%% Global trend correlation
+poly_deg = 6;
+
+for state_idx = 1:n_of_states
+    K = K_set(state_idx);
+    results = all_results{state_idx, 'results_list'}{1};
+    
+    trend_state_r_list = zeros(n_of_files, K);
+    trial_Gamma_mean_list = cell(n_of_files, 1);
+
+    for idx = 1:n_of_files
+        Gamma = results{idx, 'Gamma_list'}{1};
+        rs = transpose(meta_info{idx, 'rt_speed_clean_list'}{1});
+        rt_latency = meta_info{idx, 'rt_latency_clean_list'}{1};    
+
+        Gamma_trend = Gamma - detrend(Gamma, poly_deg);
+
+        rs_valid_range = rt_latency(1):rt_latency(end);
+        rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
+        rs_trend = rs_interpolation - detrend(rs_interpolation, poly_deg);
+
+        for state = 1:K
+            trend_state_r_list(idx, state) = corr(Gamma_trend(rs_valid_range,state), rs_trend);
+        end    
+    end
+
+    % The sort is in ascending order so the first index in the permutation_list
+    % marks the lowest correlation (drowsy model) 
+    [~, trend_permutation_list] = sort(trend_state_r_list, 2);
+    trend_inverse_permutation_list = zeros(size(trend_permutation_list));
+    for row=1:size(trend_permutation_list,1)
+        trend_inverse_permutation_list(row, trend_permutation_list(row,:)) = 1:size(trend_permutation_list,2);
+    end
+
+    results = deleteVars(results, {'trend_state_r_list', 'trend_inverse_permutation_list'});
+    results = addvars(results, trend_state_r_list, trend_inverse_permutation_list);
+
+    all_results{state_idx, 'results_list'}{1} = results;
+end
+%% Get correlation mean and std
 corr_mean_list = cell(n_of_states, 1);
 corr_std_list = cell(n_of_states, 1);
 
 for state_idx = 1:n_of_states
     results = all_results{state_idx, 'results_list'}{1};
     
-    sorted_corr = sort(results.state_r_list, 2);
+    sorted_corr = sort(results.trend_state_r_list, 2);
     corr_mean_list{state_idx} = mean(sorted_corr, 1);
     corr_std_list{state_idx} = std(sorted_corr, 1);
 end
@@ -266,9 +372,9 @@ neg_p_list = repmat(-1, 1, pairwise_count);
 for firstGroup = 1:length(K_set)-1
     for secondGroup = firstGroup+1:length(K_set)
         firstResult = all_results{firstGroup, 'results_list'}{1};
-        firstList = sort(firstResult.state_r_list, 2);
+        firstList = sort(firstResult.trend_state_r_list, 2);
         secondResult = all_results{secondGroup, 'results_list'}{1};
-        secondList = sort(secondResult.state_r_list, 2);
+        secondList = sort(secondResult.trend_state_r_list, 2);
         
         [~,p] = ttest(firstList(:,end), secondList(:,end));
         [~,neg_p] = ttest(firstList(:,1), secondList(:,1));
@@ -278,8 +384,11 @@ for firstGroup = 1:length(K_set)-1
     end
 end
 
+%%
+cd '~/Documents/eeg_hmm/cross_session_graphs/'
+
 %% Mean Correlation Trend vs K
-sigstarAlert = 0;
+sigstarAlert = 1;
 toSave = 1;
 
 r = [1, 0.1, 0.1];
@@ -332,16 +441,15 @@ end
 
 title('Correlation Trends against Number of Inferred Model')
 ylabel('Correlation with RS')
-xlabel('Number of Inferred Models of Gaussian HMM')
+xlabel('Number of Inferred Models of HMM-MAR')
 
 if toSave
     if sigstarAlert
-        output_filename = strcat(method, '_Correlation_K_trend_', 'AlertSigTest');
+        output_filename = strcat(method, '_Correlation_K_trend_', 'AlertSigTest_trend');
     else
-        output_filename = strcat(method, '_Correlation_K_trend_', 'DrowsySigTest');
+        output_filename = strcat(method, '_Correlation_K_trend_', 'DrowsySigTest_trend');
     end
-    output_filename = strcat(filename, '_', 'FunConn', '_', state_description{state});
-    set(cgfighandle, 'PaperPositionMode', 'auto');
-    saveas(cgfighandle, strcat(output_filename,'.fig'))
+    set(gcf, 'PaperPositionMode', 'auto');
+%     saveas(cgfighandle, strcat(output_filename,'.fig'))
     print(output_filename, '-djpeg')
 end

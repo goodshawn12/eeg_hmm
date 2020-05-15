@@ -199,7 +199,7 @@ delete(gcp('nocreate')); % shut down any current pool
 npar = 27;
 parpool(npar);   % request workers from the cluster
 
-smoothing_window_len = 5;
+smoothing_window_len = 25;
 smoothed_vpath_list = cell(n_of_files,1);
 vpath_list = results.vpath_list;
 
@@ -448,7 +448,7 @@ for idx = 1:n_of_files
     for state = 1:K
         ytickslabel{state} = num2str(state);
     end
-    colorbar('YTick', yticks, 'YTickLabel', {'1', '2', '3', '4', '5'});
+    colorbar('YTick', yticks, 'YTickLabel', ytickslabel);
     colormap(vpath_axis, cmap)
     title('Viterbi path')
     yticks([]);
