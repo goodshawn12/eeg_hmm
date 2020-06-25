@@ -20,12 +20,14 @@ data_filelist = dir(strcat(method, '*.mat'));
 filename_list = cell(length(data_filelist), 1);
 for i = 1:length(data_filelist)
     file = data_filelist(i);
-    filename_list{i} = file.name;    
+    if contains(file.name, 'ASR20')
+        filename_list{i} = file.name;
+    end    
 end
 filename_list = filename_list(~cellfun('isempty', filename_list));
 filename_list = unique(filename_list, 'stable');
 
-n_of_files = length(filename_list);
+n_of_files = length(filename_list)
 
 %% Prepare raw data
 n_epochs = 1;
@@ -69,6 +71,8 @@ end
 results = table(filename_list, session_name_list, K_list, epoch_length_list, training_data_size_list, ...
     timepoint_start_list, timepoint_end_list, Fs_list, hmm_list, Gamma_list, vpath_list);
 
+fprintf('Raw results data loaded.\n')
+
 %% Load EEG related metadata
 events_list = cell(n_of_files, 1);
 chanlocs_list = cell(n_of_files, 1);
@@ -98,11 +102,14 @@ end
 results = deleteVars(results, {'events_list', 'chanlocs_list'});
 results = addvars(results, events_list, chanlocs_list);
 
+fprintf('EEG meta data loaded.\n')
+
 %% Generate rt, rt_off
 rt_list = cell(n_of_files, 1);
 rt_off_list = cell(n_of_files, 1);
 rt_latency_list = cell(n_of_files, 1);
 rt_speed_list = cell(n_of_files, 1);
+event_sparsity_list = cell(n_of_files, 1);
 
 for idx = 1:n_of_files
     Fs = results{idx, 'Fs_list'}{1};
@@ -111,7 +118,9 @@ for idx = 1:n_of_files
     rt_off = zeros(1,length(events));
     rt_latency = zeros(1,length(events));
     rt_speed = zeros(1, length(events));
+    event_sparsity = zeros(1, length(events));
     
+    prev_offset = nan;
     for i = 1:length(events)
         event = events(i);
         event_type = event.type;
@@ -123,6 +132,11 @@ for idx = 1:n_of_files
             rt(i) = events(i+1).latency - event.latency;
             rt_off(i) = events(i+2).latency - event.latency;
             rt_speed(i) = 1./(rt(i)/Fs); %rt_speed is in (1/seconds)
+            
+            if ~isnan(prev_offset)
+                event_sparsity(i) = event.latency - prev_offset;
+            end
+            prev_offset = events(i+2).latency;
         end
     end
     nonempty_index = any(rt_latency, 1);
@@ -130,9 +144,11 @@ for idx = 1:n_of_files
     rt_off_list{idx} = rt_off(nonempty_index);
     rt_latency_list{idx} = rt_latency(nonempty_index);
     rt_speed_list{idx} = rt_speed(nonempty_index);
+    event_sparsity = event_sparsity(nonempty_index);
+    event_sparsity_list{idx} = event_sparsity(2:end); % The first 251 event has no prior LDT offset 
 end
-results = deleteVars(results, {'rt_list', 'rt_off_list', 'rt_latency_list', 'rt_speed_list'});
-results = addvars(results, rt_list, rt_off_list, rt_latency_list, rt_speed_list);
+results = deleteVars(results, {'rt_list', 'rt_off_list', 'rt_latency_list', 'rt_speed_list', 'event_sparsity_list'});
+results = addvars(results, rt_list, rt_off_list, rt_latency_list, rt_speed_list, event_sparsity_list);
 
 % RT and 1/RT Outlier Removal
 rt_clean_list = cell(n_of_files, 1);
@@ -181,6 +197,8 @@ for idx = 1:n_of_files
     rs_mean_list(idx) = mean(rs);
     rs_st_list(idx) = std(rs);
 end
+
+fprintf('rt processing done.\n')
 
 %% Dominant model RT 
 % window_time_sec = 2;
@@ -332,69 +350,69 @@ results = addvars(results, trial_Gamma_mean_list, state_r_list, permutation_list
     smoothed_Gamma_median_list, smoothed_state_r_list, smoothed_permutation_list, smoothed_inverse_permutation_list);
 
 %% Global movmean correlation
-movmean_state_r_list = zeros(n_of_files, K);
-
-for idx = 1:n_of_files
-    Fs = results{idx, 'Fs_list'}{1};
-    Gamma = results{idx, 'Gamma_list'}{1};
-    rs = transpose(results{idx, 'rt_speed_clean_list'}{1});
-    rt_latency = results{idx, 'rt_latency_clean_list'}{1};    
-    
-    win_len = Fs * 30;
-    smoothed_Gamma = movmean(Gamma, win_len, 1);
-    
-    rs_valid_range = rt_latency(1):rt_latency(end);
-    rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
-    smoothed_rs = movmean(rs_interpolation, win_len);
-    
-    for state = 1:K
-        movmean_state_r_list(idx, state) = corr(smoothed_Gamma(rs_valid_range,state), smoothed_rs);
-    end    
-end
-
-% The sort is in ascending order so the first index in the permutation_list
-% marks the lowest correlation (drowsy model) 
-[~, movmean_permutation_list] = sort(movmean_state_r_list, 2);
-movmean_inverse_permutation_list = zeros(size(movmean_permutation_list));
-for row=1:size(movmean_permutation_list,1)
-    movmean_inverse_permutation_list(row, movmean_permutation_list(row,:)) = 1:size(movmean_permutation_list,2);
-end
-
-results = deleteVars(results, {'movmean_state_r_list', 'movmean_inverse_permutation_list'});
-results = addvars(results, movmean_state_r_list, movmean_inverse_permutation_list);
+% movmean_state_r_list = zeros(n_of_files, K);
+% 
+% for idx = 1:n_of_files
+%     Fs = results{idx, 'Fs_list'}{1};
+%     Gamma = results{idx, 'Gamma_list'}{1};
+%     rs = transpose(results{idx, 'rt_speed_clean_list'}{1});
+%     rt_latency = results{idx, 'rt_latency_clean_list'}{1};    
+%     
+%     win_len = Fs * 30;
+%     smoothed_Gamma = movmean(Gamma, win_len, 1);
+%     
+%     rs_valid_range = rt_latency(1):rt_latency(end);
+%     rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
+%     smoothed_rs = movmean(rs_interpolation, win_len);
+%     
+%     for state = 1:K
+%         movmean_state_r_list(idx, state) = corr(smoothed_Gamma(rs_valid_range,state), smoothed_rs);
+%     end    
+% end
+% 
+% % The sort is in ascending order so the first index in the permutation_list
+% % marks the lowest correlation (drowsy model) 
+% [~, movmean_permutation_list] = sort(movmean_state_r_list, 2);
+% movmean_inverse_permutation_list = zeros(size(movmean_permutation_list));
+% for row=1:size(movmean_permutation_list,1)
+%     movmean_inverse_permutation_list(row, movmean_permutation_list(row,:)) = 1:size(movmean_permutation_list,2);
+% end
+% 
+% results = deleteVars(results, {'movmean_state_r_list', 'movmean_inverse_permutation_list'});
+% results = addvars(results, movmean_state_r_list, movmean_inverse_permutation_list);
 
 %% Global trend correlation
-trend_state_r_list = zeros(n_of_files, K);
-trial_Gamma_mean_list = cell(n_of_files, 1);
-
-poly_deg = 6;
-
-for idx = 1:n_of_files
-    Gamma = results{idx, 'Gamma_list'}{1};
-    rs = transpose(results{idx, 'rt_speed_clean_list'}{1});
-    rt_latency = results{idx, 'rt_latency_clean_list'}{1};    
-    
-    Gamma_trend = Gamma - detrend(Gamma, poly_deg);
-    
-    rs_valid_range = rt_latency(1):rt_latency(end);
-    rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
-    rs_trend = rs_interpolation - detrend(rs_interpolation, poly_deg);
-    
-    for state = 1:K
-        trend_state_r_list(idx, state) = corr(Gamma_trend(rs_valid_range,state), rs_trend);
-    end    
-end
-
-% The sort is in ascending order so the first index in the permutation_list
-% marks the lowest correlation (drowsy model) 
-[~, trend_permutation_list] = sort(trend_state_r_list, 2);
-trend_inverse_permutation_list = zeros(size(trend_permutation_list));
-for row=1:size(trend_permutation_list,1)
-    trend_inverse_permutation_list(row, trend_permutation_list(row,:)) = 1:size(trend_permutation_list,2);
-end
-
-results = deleteVars(results, {'trend_state_r_list', 'trend_inverse_permutation_list'});
-results = addvars(results, trend_state_r_list, trend_inverse_permutation_list);
+% trend_state_r_list = zeros(n_of_files, K);
+% trial_Gamma_mean_list = cell(n_of_files, 1);
+% 
+% poly_deg = 6;
+% 
+% for idx = 1:n_of_files
+%     Gamma = results{idx, 'Gamma_list'}{1};
+%     rs = transpose(results{idx, 'rt_speed_clean_list'}{1});
+%     rt_latency = results{idx, 'rt_latency_clean_list'}{1};    
+%     
+%     Gamma_trend = Gamma - detrend(Gamma, poly_deg);
+%     
+%     rs_valid_range = rt_latency(1):rt_latency(end);
+%     rs_interpolation = transpose(interp1(rt_latency, rs, rs_valid_range));
+%     rs_trend = rs_interpolation - detrend(rs_interpolation, poly_deg);
+%     
+%     for state = 1:K
+%         trend_state_r_list(idx, state) = corr(Gamma_trend(rs_valid_range,state), rs_trend);
+%     end    
+% end
+% 
+% % The sort is in ascending order so the first index in the permutation_list
+% % marks the lowest correlation (drowsy model) 
+% [~, trend_permutation_list] = sort(trend_state_r_list, 2);
+% trend_inverse_permutation_list = zeros(size(trend_permutation_list));
+% for row=1:size(trend_permutation_list,1)
+%     trend_inverse_permutation_list(row, trend_permutation_list(row,:)) = 1:size(trend_permutation_list,2);
+% end
+% 
+% results = deleteVars(results, {'trend_state_r_list', 'trend_inverse_permutation_list'});
+% results = addvars(results, trend_state_r_list, trend_inverse_permutation_list);
 
 %% Calculate overall state probability
 % overall_state_prob_list = zeros(n_of_files, K);
@@ -415,9 +433,12 @@ smooth_90s = 1;
 
 % Preparation
 if smooth_90s
-    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/90s_corr_smoothed_graphs_K%d', K);
+    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/ten_session/90s_corr_smoothed_graphs_K%d', K);
 else
-    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/graphs_K%d', K);
+    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/ten_session/graphs_K%d', K);
+end
+if ~exist(graphDir, 'dir')
+    mkdir(graphDir);
 end
 cd(graphDir);
 
@@ -449,22 +470,244 @@ toSave = 0;
 visible = 'off';
 
 %% Smoothing vpath
-delete(gcp('nocreate')); % shut down any current pool
-npar = 27;
-parpool(npar);   % request workers from the cluster
+% delete(gcp('nocreate')); % shut down any current pool
+% npar = 27;
+% parpool(npar);   % request workers from the cluster
+% 
+% smoothing_window_len = 25;
+% smoothed_vpath_list = cell(n_of_files,1);
+% vpath_list = results.vpath_list;
+% 
+% parfor (idx = 1:n_of_files, npar)
+%     vpath = vpath_list{idx};
+%     smoothed_vpath_list{idx} = movingModeSmoothing(vpath, smoothing_window_len, 1, 1:K);
+% end
+% 
+% results = deleteVars(results, 'smoothed_vpath_list');
+% results = addvars(results, smoothed_vpath_list);
+% delete(gcp('nocreate'));
 
-smoothing_window_len = 25;
-smoothed_vpath_list = cell(n_of_files,1);
-vpath_list = results.vpath_list;
+%% Epoch Gamma by timelock
+Gamma_251_prior = cell(n_of_files, 1);
+Gamma_251 = cell(n_of_files, 1);
+Gamma_253 = cell(n_of_files, 1);
+Gamma_254 = cell(n_of_files, 1);
+epoched_rt = cell(n_of_files, 1);
+epoched_rt_off = cell(n_of_files, 1);
+epoched_rt_latency = cell(n_of_files, 1);
 
-parfor (idx = 1:n_of_files, npar)
-    vpath = vpath_list{idx};
-    smoothed_vpath_list{idx} = movingModeSmoothing(vpath, smoothing_window_len, 1, 1:K);
+epoched_table = table();
+smoothing_win_len = 1;
+
+for idx = 1:n_of_files 
+    Gamma = results{idx, 'Gamma_list'}{1};
+    Gamma = movmean(Gamma, smoothing_win_len);
+    Fs = results{idx, 'Fs_list'}{1};
+    training_data_size = results{idx, 'epoch_length_list'}{1};
+    rt = results{idx, 'rt_clean_list'}{1};
+    rt_off = results{idx, 'rt_off_clean_list'}{1};
+    rt_latency = results{idx, 'rt_latency_clean_list'}{1};
+    rt = rt(2:end);
+    rt_off = rt_off(2:end);
+    rt_latency = rt_latency(2:end);
+    
+    zero_padded_Gamma = [zeros(training_data_size(1)-size(Gamma,1),K); Gamma];
+    
+    %Timelock prior to 251
+    epoch_start_offset_251_prior = -8 * Fs;
+    epoch_end_offset_251_prior = 4 * Fs;
+    
+    % Timelock 251/252, lane-departure task introduced
+    epoch_start_offset_251 = -2 * Fs;
+    epoch_end_offset_251 = 4 * Fs;
+
+    % Timelock 253, response onset
+    epoch_start_offset_253 = -3 * Fs;
+    epoch_end_offset_253 = 3 * Fs;
+
+    % Timelock 254, response off-set
+    epoch_start_offset_254 = -4 * Fs;
+    epoch_end_offset_254 = 2 * Fs;   
+    
+    % Prevent epoch exceeding vpath dimension
+    removeIndex = any(rt_latency + epoch_start_offset_251_prior < 1, 1)...
+        | any(rt_latency + rt_off + epoch_end_offset_254 > size(zero_padded_Gamma, 1));
+    rt(removeIndex) = [];
+    rt_off(removeIndex) = [];
+    rt_latency(removeIndex) = [];
+    
+    epoched_rt{idx} = rt;
+    epoched_rt_off{idx} = rt_off;
+    epoched_rt_latency{idx} = rt_latency;
+   
+    Gamma_251_prior{idx} = permute(epochByEvent(zero_padded_Gamma, rt_latency, epoch_start_offset_251_prior, epoch_end_offset_251_prior), [1 3 2]);
+    Gamma_251{idx} = permute(epochByEvent(zero_padded_Gamma, rt_latency, epoch_start_offset_251, epoch_end_offset_251), [1 3 2]);
+    Gamma_253{idx} = permute(epochByEvent(zero_padded_Gamma, rt_latency+rt, epoch_start_offset_253, epoch_end_offset_253), [1 3 2]);
+    Gamma_254{idx} = permute(epochByEvent(zero_padded_Gamma, rt_latency+rt_off, epoch_start_offset_254, epoch_end_offset_254), [1 3 2]);
 end
 
-results = deleteVars(results, 'smoothed_vpath_list');
-results = addvars(results, smoothed_vpath_list);
-delete(gcp('nocreate'));
+epoched_table = deleteVars(epoched_table, {'Gamma_251_prior', 'Gamma_251', 'Gamma_253', 'Gamma_254', 'epoched_rt', 'epoched_rt_off', 'epoched_rt_latency'});
+epoched_table = addvars(epoched_table, Gamma_251_prior, Gamma_251, Gamma_253, Gamma_254, epoched_rt, epoched_rt_off, epoched_rt_latency);
+
+fprintf('Gamma epoching done.\n')
+
+%% Process Global Gamma epoched
+total_epochs = 0;
+for idx = 1:n_of_files
+    total_epochs = total_epochs + length(epoched_table{idx, 'epoched_rt'}{1});
+end
+epoched_length = size(epoched_table{1, 'Gamma_251'}{1}, 2);
+
+global_Gamma_251_prior = zeros(total_epochs, epoch_end_offset_251_prior-epoch_start_offset_251_prior+1, K);
+global_Gamma_timelock = zeros(3, total_epochs, epoched_length, K);
+global_rt = zeros(total_epochs, 1);
+global_rt_off = zeros(total_epochs, 1);
+global_rt_latency = zeros(total_epochs, 1);
+
+curr_epoch = 1;
+Gamma_events = {'Gamma_251', 'Gamma_253', 'Gamma_254'};
+for idx = 1:n_of_files
+    permutation = results{idx, 'smoothed_permutation_list'};
+    rt = epoched_table{idx, 'epoched_rt'}{1};   
+    n_of_epochs = length(rt);
+    end_epoch = curr_epoch + n_of_epochs - 1;
+    
+    global_rt(curr_epoch:end_epoch) = rt;
+    global_rt_off(curr_epoch:end_epoch) = epoched_table{idx, 'epoched_rt_off'}{1};
+    global_rt_latency(curr_epoch:end_epoch) = epoched_table{idx, 'epoched_rt_latency'}{1};
+    
+    epoched_Gamma = epoched_table{idx, 'Gamma_251_prior'}{1};
+    global_Gamma_251_prior(curr_epoch:end_epoch,:,:) = epoched_Gamma;
+    for event = 1:3
+        epoched_Gamma = epoched_table{idx, Gamma_events{event}}{1};
+        global_Gamma_timelock(event, curr_epoch:end_epoch,:,:) = epoched_Gamma(:,:,permutation);
+    end
+    curr_epoch = end_epoch + 1;
+end
+
+% Sort everything by rt
+[sorted_global_rt, sortIdx] = sort(global_rt);
+sorted_global_rt_off = global_rt_off(sortIdx);
+sorted_global_rt_latency = global_rt_latency(sortIdx);
+
+sorted_global_Gamma_timelock = zeros(size(global_Gamma_timelock));
+sorted_global_Gamma_251_prior = global_Gamma_251_prior(sortIdx,:,:);
+for event = 1:3
+    sorted_global_Gamma_timelock(event,:,:,:) = global_Gamma_timelock(event,sortIdx,:,:);
+end
+
+fprintf('Global Gamma and rt preparation done.\n')
+
+%% Global colormap Gamma timelock prior to event
+visible = 'on';
+toSave = 1;
+
+n_of_epochs = size(sorted_global_Gamma_timelock,2);
+thick_line_width = 2;
+thin_line_width = 0.01;
+f = figure('Visible', visible); f.Position(3) = f.Position(4) * 3;
+for state = 1:K
+    gradient_cmap = ones(256,3);
+    gradient_cmap(:,setdiff(1:K,state)) = repmat(((255:-1:0)/255)',1,2);
+        
+    epoched_Gamma = squeeze(sorted_global_Gamma_251_prior(:,:,state));
+    ax = subplot(1,3,state);
+    imagesc(epoched_Gamma); hold on; 
+    axis('square');
+    xtick_labels = cell(1, 12); xtick_labels_num = -8:1:4;
+    for i = 1:13
+        xtick_labels{i} = num2str(xtick_labels_num(i));
+    end        
+    xticks(1:Fs:Fs*12+1); xticklabels(xtick_labels); yticks([]); yticklabels([]);
+    xlabel('seconds'), ylabel('epochs');
+    
+    line([-epoch_start_offset_251_prior, -epoch_start_offset_251_prior], [1, n_of_epochs], 'linewidth',2,'color','k');
+    plot(sorted_global_rt-epoch_start_offset_251_prior, 1:n_of_epochs, 'linewidth',thick_line_width,'color',[0.5 0.5 0.5]); 
+    colormap(ax, gradient_cmap)
+end
+
+if toSave
+    set(gcf, 'PaperPositionMode', 'auto');
+%         saveas(gcf, strcat(method, '_K', num2str(K), '_global_Gamma_timelock_251_prior_', num2str(smoothing_win_len), '.fig'))
+    print(strcat(method, '_K', num2str(K), '_global_Gamma_timelock_251_prior_', num2str(smoothing_win_len)), '-djpeg')
+end
+
+fprintf('Global Gamma prior to 251 timelock plots done.\n')
+
+%% Global colormap of state Gamma timelock to events
+visible = 'on';
+toSave = 1;
+
+n_of_epochs = size(sorted_global_Gamma_timelock,2);
+thick_line_width = 2;
+thin_line_width = 0.01;
+gray_color = [0.5 0.5 0.5];
+f1 = figure('Visible', visible); f1.Position(3) = f1.Position(4) * 3;
+for state = 1:K
+    gradient_cmap = ones(256,3);
+    gradient_cmap(:,setdiff(1:K,state)) = repmat(((255:-1:0)/255)',1,2);
+    
+    ax_251 = subplot(1, K, state);
+    imagesc(squeeze(sorted_global_Gamma_timelock(1,:,:,state))); hold on;
+    ax_251.XTick = 1:Fs:Fs*6+1; ax_251.XTickLabel = {'-2', '-1', '0', '1', '2', '3', '4'}; ax_251.YTick = []; ax_251.YTickLabel = [];
+    axis('square');
+    line([-epoch_start_offset_251, -epoch_start_offset_251], [1, n_of_epochs], 'linewidth',thick_line_width,'color','k');
+    plot(sorted_global_rt-epoch_start_offset_251, 1:n_of_epochs, 'linewidth',thick_line_width,'color',gray_color);
+%     plot(sorted_global_rt_off-epoch_start_offset_251, 1:n_of_epochs, 'linewidth',thin_line_width,'color', [0.8, 0.8, 0.8]);
+    colormap(ax_251, gradient_cmap);
+end
+
+if toSave
+    set(gcf, 'PaperPositionMode', 'auto');
+%     saveas(gcf, strcat(method, '_K', num2str(K), '_global_Gamma_timelock_movmean_', num2str(smoothing_win_len), '.fig'))
+    print(strcat(method, '_K', num2str(K), '_global_Gamma_timelock_251_movmean_', num2str(smoothing_win_len)), '-djpeg')
+end
+
+f2 = figure('Visible', visible); f2.Position(3) = f2.Position(4) * 3;
+for state = 1:K
+    gradient_cmap = ones(256,3);
+    gradient_cmap(:,setdiff(1:K,state)) = repmat(((255:-1:0)/255)',1,2);
+    
+    ax_253 = subplot(1, K, state); 
+    imagesc(squeeze(sorted_global_Gamma_timelock(2,:,:,state))); hold on;
+    ax_253.XTick = 1:Fs:Fs*6+1; ax_253.XTickLabel = {'-3', '-2', '-1', '0', '1', '2', '3'}; ax_253.YTick = []; ax_253.YTickLabel = [];
+    axis('square');
+    plot(-epoch_start_offset_253 - sorted_global_rt, 1:n_of_epochs, 'linewidth',thick_line_width,'color',gray_color)
+    line([-epoch_start_offset_253, -epoch_start_offset_253], [1, n_of_epochs],'linewidth',thick_line_width,'color','k')
+%     plot(-epoch_start_offset_253 - sorted_global_rt+sorted_global_rt_off, 1:n_of_epochs, 'linewidth',thin_line_width,'color',[0.8,0.8,0.8])
+
+    colormap(ax_253, gradient_cmap);
+end
+
+if toSave
+    set(gcf, 'PaperPositionMode', 'auto');
+%     saveas(gcf, strcat(method, '_K', num2str(K), '_global_Gamma_timelock_movmean_', num2str(smoothing_win_len), '.fig'))
+    print(strcat(method, '_K', num2str(K), '_global_Gamma_timelock_253_movmean_', num2str(smoothing_win_len)), '-djpeg')
+end
+
+f3 = figure('Visible', visible); f3.Position(3) = f3.Position(4) * 3;
+for state = 1:K
+    gradient_cmap = ones(256,3);
+    gradient_cmap(:,setdiff(1:K,state)) = repmat(((255:-1:0)/255)',1,2);
+    
+    ax_254 = subplot(1, K, state);
+    imagesc(squeeze(sorted_global_Gamma_timelock(3,:,:,state))); hold on;
+    ax_254.XTick = 1:Fs:Fs*6+1; ax_254.XTickLabel = {'-4', '-3', '-2', '-1', '0', '1', '2'}; ax_254.YTick = []; ax_254.YTickLabel = [];
+    axis('square'); 
+%     plot(-epoch_start_offset_254 - sorted_global_rt_off, 1:n_of_epochs, 'linewidth',thin_line_width,'color','k')
+%     plot(-epoch_start_offset_254 - sorted_global_rt_off+sorted_global_rt, 1:n_of_epochs, 'linewidth',thin_line_width,'color','w')
+    line([-epoch_start_offset_254, -epoch_start_offset_254], [1, n_of_epochs], 'linewidth',thick_line_width,'color', 'k')
+    
+    colormap(ax_254, gradient_cmap);
+end
+
+if toSave
+    set(gcf, 'PaperPositionMode', 'auto');
+%     saveas(gcf, strcat(method, '_K', num2str(K), '_global_Gamma_timelock_movmean_', num2str(smoothing_win_len), '.fig'))
+    print(strcat(method, '_K', num2str(K), '_global_Gamma_timelock_254_movmean_', num2str(smoothing_win_len)), '-djpeg')
+end
+
+fprintf('Global Gamma timelock plots done.\n')
 
 %% Box Plot for Reaction time vs dominant model
 % dominatn_state_rt_list = results.dominant_state_rt_list;
@@ -545,7 +788,6 @@ for idx = 1:n_of_files
     training_data_size = results{idx, 'epoch_length_list'}{1};
     start_timepoint = results{idx, 'timepoint_start_list'}{1};
     end_timepoint = results{idx, 'timepoint_end_list'}{1};
-    all_events = results{idx, 'events_list'}{1};
     Fs = results{idx, 'Fs_list'}{1};
     rt = results{idx, 'rt_clean_list'}{1};
     rt_off = results{idx, 'rt_off_clean_list'}{1};
@@ -794,11 +1036,11 @@ fprintf('timelock vpath plots done.\n')
 %     print('all_session_254', '-djpeg')
 % end
 
-%% Plot smoothed state time
+%% Plot smoothed state time 
 visible = 'on';
 toSave = 0;
 smooth_90s = 1;
-for idx = 11
+for idx = 1:n_of_files
     Fs = results{idx, 'Fs_list'}{1};
     Gamma = results{idx, 'Gamma_list'}{1};
     rt = results{idx, 'rt_clean_list'}{1};
@@ -836,10 +1078,13 @@ for idx = 11
     vpath_values = unique(corresponding_vpath);
     n_of_vpath_values = length(vpath_values);
     vpath_axis = subplot(n_subplots,1,1, 'Parent', p);
+    vpath_axis.Position(4) = vpath_axis.Position(4)/2;
     imagesc([0 end_minutes], [1 1], corresponding_vpath); colormap(vpath_axis, cmap(vpath_values, :));
     title('Viterbi Path')
-    set(gca, 'YTick', [])
-    set(gca, 'YTickLabel', [])
+    vpath_axis.YTick = [];
+    vpath_axis.YTickLabel = [];
+    vpath_axis.XTick = [];
+    vpath_axis.XTickLabel = []; 
     
     % Configure colorbar
 %     ytick_space = (n_of_vpath_values-1)/2/n_of_vpath_values;
@@ -851,10 +1096,15 @@ for idx = 11
 %     end
 %     colorbar('YTick', yticks, 'YTickLabel', ytickslabel);   
 
-    rs_axis = subplot(n_subplots,1,2, 'Parent', p); plot(rt_latency/Fs/60, movmean(rt_speed, 7), 'k.');
-    title('Reaction Speed')
+    rs_axis = subplot(n_subplots,1,2, 'Parent', p);
+    rs_x_values = rt_latency/Fs/60;
+    plot(rs_x_values, rt_speed, '-', 'LineWidth', 0.2, 'Color', [0.7,0.7,0.7]); hold on;
+    plot(rs_x_values, rt_speed, 'k.', 'LineWidth', 2, 'Color', 'k'); 
+    title('Reaction Speed by Events')
     ylabel('Speed (1/sec)')
     xlim([0 end_minutes])
+    rs_axis.XTick = [];
+    rs_axis.XTickLabel = [];
 %     xlim([0, vpath_axis.XLim(2)*rs_axis.Position(3)/vpath_axis.Position(3)])
     
     [~, permutation_list] = sort(state_r_list);
@@ -895,7 +1145,7 @@ fprintf('vpath plot done.\n')
 % t = uitable('Data', results.overall_state_prob_list, 'ColumnName', {'State 1', 'State 2', 'State 3'}, 'RowName', results.filename_list);
 % t.Position(3:4) = t.Extent(3:4);
 
-%% Detrend analysis
+%% Plot state timepath with trend analysis
 visible = 'off';
 toSave = 1;
 smooth_90s = 1;
@@ -930,7 +1180,7 @@ for idx = 1:n_of_files
     end_minutes = (size(stateProb,2)-1)*walkLen/Fs/60;
     
     n_subplots = K+3;
-    fig1 = figure('Visible', visible);
+    fig1 = figure('Visible', visible); fig1.Position(3) = fig1.Position(3) * 1.5; fig1.Position(4) = fig1.Position(4) * 1.5;
     p = uipanel('Parent', fig1);
     
     [~, corresponding_vpath] = max(stateProb, [], 1);
@@ -947,8 +1197,8 @@ for idx = 1:n_of_files
     
     rs_axis = subplot(n_subplots,1,2, 'Parent', p);
     rs_x_values = rt_latency/Fs/60;
-    plot(rs_x_values, rt_speed, 'k.', 'LineWidth', 0.2, 'Color', [0.7,0.7,0.7]); hold on;
-    plot(rs_x_values, movmean(rt_speed, 7), 'k-', 'LineWidth', 2);
+    plot(rs_x_values, rt_speed, '-', 'LineWidth', 0.2, 'Color', [0.7,0.7,0.7]); hold on;
+    plot(rs_x_values, rt_speed, 'k.', 'LineWidth', 2, 'Color', 'k');
     title('Reaction Speed by Events')
     ylabel('Speed (1/sec)')
     xlim([0 end_minutes])
@@ -966,12 +1216,12 @@ for idx = 1:n_of_files
         plot(x_values, y_values, 'Color', cmap(state,:))
         r = state_r_list(state);       
         txt = ['r = ' num2str(r)];    
-        text_label = text(1, text_y_position, txt, 'FontSize', 10, 'Parent', state_axis);
         if mean(y_values(1:floor(size(y_values,2)/10))) > mean(state_axis.YLim)
             text_y_position = state_axis.YLim(1) + range(state_axis.YLim)/5;
         else
             text_y_position = state_axis.YLim(2) - range(state_axis.YLim)/5;
         end
+        text_label = text(1, text_y_position, txt, 'FontSize', 10, 'Parent', state_axis);
         text_label.Position(2) = state_axis.YLim(1) + range(state_axis.YLim)/5;
         
         title(strcat('State', {' '}, num2str(state)))
@@ -982,26 +1232,32 @@ for idx = 1:n_of_files
     end
     
     %     detrended_Gamma = detrend(Gamma, 1, 1:floor(length(Gamma)/10):length(Gamma));
-    detrended_Gamma = detrend(Gamma, 6);
-    Gamma_trend = Gamma - detrended_Gamma;
-    detrended_RS = detrend(rt_speed, 6);
-    RS_trend = rt_speed - detrended_RS;
+%     detrended_Gamma = detrend(Gamma, 6);
+%     Gamma_trend = Gamma - detrended_Gamma;
+%     detrended_RS = detrend(rt_speed, 6);
+%     RS_trend = rt_speed - detrended_RS;
     
-    stateTrend = zeros(nStates,floor(nTime/walkLen));
-    for it = 1:floor((nTime-winLen+walkLen)/walkLen)
-        time_range = (it-1)*walkLen+1:(it-1)*walkLen+winLen;
-        stateTrend(:,it) = mean(Gamma_trend(time_range,:),1)';
-    end
-    stateTrend(:, any(sum(stateTrend, 1)==0, 1)) = [];
+%     stateTrend = zeros(nStates,floor(nTime/walkLen));
+%     for it = 1:floor((nTime-winLen+walkLen)/walkLen)
+%         time_range = (it-1)*walkLen+1:(it-1)*walkLen+winLen;
+%         stateTrend(:,it) = mean(Gamma_trend(time_range,:),1)';
+%     end
+%     stateTrend(:, any(sum(stateTrend, 1)==0, 1)) = [];
+
+    smoothing_win_len = Fs * 300;
+    smoothed_Gamma = movmean(Gamma, smoothing_win_len, 1);    
+    rs_valid_range = rt_latency(1):rt_latency(end);
+    rs_interpolation = transpose(interp1(rt_latency, rt_speed, rs_valid_range));
+    smoothed_rs = movmean(rs_interpolation, smoothing_win_len);
     
     trend_axis = subplot(n_subplots,1,K+3);
-    x_values = 1:(end_minutes-1)/(size(stateTrend,2)-1):end_minutes;
-    plot(rt_latency/Fs/60, normalize(movmean(rt_speed, floor(length(rt_speed)/5))), 'Color', [0.7,0.7,0.7], 'LineWidth', 3, 'LineStyle', ':'); hold on;
+    x_values = rs_valid_range; %1:(end_minutes-1)/(size(stateTrend,2)-1):end_minutes;
+    plot(rs_valid_range, normalize(smoothed_rs), 'Color', [0.7,0.7,0.7], 'LineWidth', 3, 'LineStyle', ':'); hold on;
     for i = 1:K
-        y_values = stateProb(i,:);        
-        plot(x_values, normalize(movmean(y_values, floor(size(y_values,2)/5))), 'Color', cmap(i,:), 'LineWidth', 1.5); hold on;          
+        y_values = smoothed_Gamma(rs_valid_range,i);        
+        plot(rs_valid_range, normalize(y_values), 'Color', cmap(i,:), 'LineWidth', 1.5); hold on;          
     end
-    xlim([0 end_minutes])
+    xlim([0 end_minutes*60*Fs])
     trend_axis.Position(4) = trend_axis.Position(4) * 3/2;
     trend_axis.Position(2) = state_axis.OuterPosition(2) - trend_axis.OuterPosition(4);
     trend_axis.YTick = [];
@@ -1020,7 +1276,6 @@ for idx = 1:n_of_files
 end
 
 fprintf('detrend plot done.\n')
-
 
 %% Heatmap overall state probability
 % figure;
@@ -1080,7 +1335,7 @@ for idx = 1:n_of_files
     if toSave
         output_filename = strcat(filename, '_', 'transProb');
         set(gcf, 'PaperPositionMode', 'auto');
-        saveas(gcf, strcat(output_filename,'.fig'))
+%         saveas(gcf, strcat(output_filename,'.fig'))
         print(output_filename, '-djpeg')
     end
 end
@@ -1398,32 +1653,36 @@ end
 
 fprintf('Gamma timelock plots done.\n')
 
-%% Plot global averaged functional connectivity
-isVisible = "on";
-toSave = 0;
-
+%% Calculate global averaged functional connectivity
 % set(0, 'ShowHiddenHandles', 'on');
 common_chanlocs = results{1, 'chanlocs_list'}{1};
 for idx = 2:n_of_files
     common_chanlocs = intersect(common_chanlocs, results{idx, 'chanlocs_list'}{1}, 'stable');
 end
 
-mean_funcConn = zeros(length(common_chanlocs), length(common_chanlocs), K);
+mean_covmat = zeros(length(common_chanlocs), length(common_chanlocs), K);
+mean_corrmat = zeros(length(common_chanlocs), length(common_chanlocs), K);
+
 for idx = 1:n_of_files
     hmm = results{idx, 'hmm_list'}{1};
     chanlocs = results{idx, 'chanlocs_list'}{1};
-    [~, permutation] = sort(results{idx, 'trend_state_r_list'}, 2);
+    [~, permutation] = sort(results{idx, 'smoothed_state_r_list'}, 2);
 
     [~, chan_index] = ismember(common_chanlocs, chanlocs);
     for i = 1:K
         state = permutation(i);
-        funcConn = getFuncConn(hmm, state);
-        mean_funcConn(:,:,i) = funcConn(chan_index, chan_index) + mean_funcConn(:,:,i);
+        [covmat, corrmat] = getFuncConn(hmm, state);
+        mean_covmat(:,:,i) = covmat(chan_index, chan_index) + mean_covmat(:,:,i);
+        mean_corrmat(:,:,i) = corrmat(chan_index, chan_index) + mean_corrmat(:,:,i);
     end
 end
-mean_funcConn = mean_funcConn ./ n_of_files;
+mean_covmat = mean_covmat ./ n_of_files;
+mean_corrmat = mean_corrmat ./ n_of_files;
 
-% Plot
+%% Plot covmat
+isVisible = "on";
+toSave = 1;
+
 if K == 2
     n_row = 1; n_col = 2;
 elseif K == 3
@@ -1434,13 +1693,14 @@ else
     n_row = ceil(K/3); n_col = 3;
 end
 
-global_min = min(mean_funcConn, [], 'all');
-global_max = max(mean_funcConn, [], 'all');
+% Plot covmat
+global_min = min(mean_covmat, [], 'all');
+global_max = max(mean_covmat, [], 'all');
 f = figure('Visible', isVisible); colormap(copper);
 for i = 1:K
     caxis manual; caxis([global_min, global_max]);
     state_axes = subplot(n_row, n_col, i);
-    imagesc(flip(mean_funcConn(:,:,i), 1));
+    imagesc(flip(mean_covmat(:,:,i), 1));
     xticks(1:length(common_chanlocs)); xticklabels(common_chanlocs); xtickangle(90);
     yticks(1:length(common_chanlocs)); yticklabels(flip(common_chanlocs));
     title(state_description{i});
@@ -1451,15 +1711,54 @@ colorbar_x = state_axes.OuterPosition(1) + state_axes.OuterPosition(3);
 colorbar_y = state_axes.Position(2);
 colorbar_w = 0.01;
 colorbar_h = state_axes.Position(4);
-% colorbar('Location', 'manual', 'Position', [colorbar_x, colorbar_y, colorbar_w, colorbar_h]);
+colorbar('Location', 'manual', 'Position', [colorbar_x, colorbar_y, colorbar_w, colorbar_h]);
 
 if toSave
     set(gcf, 'PaperPositionMode', 'auto');
 %         saveas(gcf, strcat(filename,'_Gamma_mean_','254','.fig'))
-    print(strcat(method,'_K',K,'_meanFuncConn_smoothed'), '-djpeg')
+    print(strcat(method,'_K',num2str(K),'_meanCovmat_smoothed'), '-djpeg')
 end
 
+%% Plot corrmat
+isVisible = "on";
+toSave = 1;
 
+if K == 2
+    n_row = 1; n_col = 2;
+elseif K == 3
+    n_row = 1; n_col = 3;
+elseif K == 4
+    n_row = 2; n_col = 2;
+else
+    n_row = ceil(K/3); n_col = 3;
+end
+
+% Plot covmat
+global_min = min(mean_corrmat, [], 'all');
+global_max = max(mean_corrmat, [], 'all');
+f = figure('Visible', isVisible); colormap(copper);
+for i = 1:K
+    caxis manual; caxis([global_min, global_max]);
+    state_axes = subplot(n_row, n_col, i);
+    mean_corrmat(1:5,1:5,i)
+    imagesc(flip(mean_corrmat(:,:,i), 1));
+    xticks(1:length(common_chanlocs)); xticklabels(common_chanlocs); xtickangle(90);
+    yticks(1:length(common_chanlocs)); yticklabels(flip(common_chanlocs));
+    title(state_description{i});
+    axis('square');
+end        
+f.Position(3) = f.Position(4) * 3;
+colorbar_x = state_axes.OuterPosition(1) + state_axes.OuterPosition(3);
+colorbar_y = state_axes.Position(2);
+colorbar_w = 0.01;
+colorbar_h = state_axes.Position(4);
+colorbar('Location', 'manual', 'Position', [colorbar_x, colorbar_y, colorbar_w, colorbar_h]);
+
+if toSave
+    set(gcf, 'PaperPositionMode', 'auto');
+%         saveas(gcf, strcat(filename,'_Gamma_mean_','254','.fig'))
+    print(strcat(method,'_K',num2str(K),'_meanCorrmat_smoothed'), '-djpeg')
+end
 
 
 

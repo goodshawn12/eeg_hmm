@@ -1,11 +1,11 @@
-% cd '/home/ting/Documents/eeg_hmm';
-% addpath('/home/ting/Documents/eeg_hmm');
-% addpath(genpath('/home/ting/Documents/eeg_hmm/Utility'))
-% addpath('/data/projects/Shawn/2019_HMM/data/');
-% eeglab;
+cd '/home/ting/Documents/eeg_hmm';
+addpath('/home/ting/Documents/eeg_hmm');
+addpath(genpath('/home/ting/Documents/eeg_hmm/Utility'))
+addpath('/data/projects/Shawn/2019_HMM/data/');
+run('/data/common/matlab/eeglab/eeglab');
 
 %% Specify number of inferred states
-K = 5;
+K = 3;
 resultsDir = sprintf('/home/ting/Documents/eeg_hmm/AMICA_results/results_K%d/', K);
 
 %% Manual setup files to process

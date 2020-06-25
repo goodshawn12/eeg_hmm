@@ -2,11 +2,11 @@ cd '/home/ting/Documents/eeg_hmm';
 addpath('/home/ting/Documents/eeglab')
 addpath(genpath('HMM-MAR'))
 addpath('/data/projects/Shawn/2019_HMM/data')
-%/data/projects/Shawn/2016 JNE/dataset
+addpath('/data/projects/Shawn/2016 JNE/dataset')
 
 %% Indexing datafile
-data_base_dir = '/data/projects/Shawn/2019_HMM/data/';
-% data_nase_dir = '/data/projects/Shawn/2016 JNE/dataset/';
+% data_base_dir = '/data/projects/Shawn/2019_HMM/data/';
+data_base_dir = '/data/projects/Shawn/2016 JNE/dataset/';
 
 data_filelist = dir(strcat(data_base_dir, '*.set'));
 data_filenames = {};
@@ -41,7 +41,7 @@ select_start = 0;
 select_end = 1;
 Fs = 250;
 
-K = 5; 
+K = 3; 
 use_stochastic = 0;
 method = 'MAR';
 
@@ -57,7 +57,6 @@ options.verbose = 1;
 options.useParallel = 0;
 options.standardise = 0;
 options.onpower = 0;
-% options.DirichletDiag = 100;
 
 % options.cyc = cyc;
 % options.tol = tol;
@@ -68,6 +67,7 @@ if strcmp(method,'MAR')
     options.order = 1;
     options.zeromean = 1;
     options.covtype = 'diag';
+    options.DirichletDiag = 1000;
 elseif strcmp(method, 'TDE')
     % For TDE: order = 0, zeromean = 1, covtype = 'full'
     options.embeddedlags = -7:7;
@@ -96,13 +96,11 @@ end
 
 %% Train
 delete(gcp('nocreate')); % shut down any current pool
-npar = 27;
+npar = 10;
 parpool(npar);   % request workers from the cluster
 
 options_list = repmat(options, 1, n_of_files);
 results_list = cell(1, n_of_files);
-results_list_header = {'hmm', 'Gamma', 'Xi', 'vpath', 'fehist', ...
-    'time_elapsed', 'select_start', 'select_end', 'training_data_size'};
 
 parfor (idx = 1:n_of_files, npar)
     X = transpose(eegdata_list{idx}.data);
@@ -111,7 +109,7 @@ parfor (idx = 1:n_of_files, npar)
     options_list(idx).Fs = Fs;
     
     start_time = tic;
-    [hmm, Gamma, Xi, vpath, ~, ~, fehist] = hmmmar(X, T, options_list(idx));
+    [hmm, Gamma, Xi, vpath, GammaInit, residuals, fehist] = hmmmar(X, T, options_list(idx));
     time_elapsed = toc(start_time)
 
     % save output and meta data
@@ -120,6 +118,9 @@ parfor (idx = 1:n_of_files, npar)
     result.Gamma = Gamma;
     result.Xi = Xi;
     result.vpath = vpath;
+    result.fehist = fehist;
+    result.GammaInit = GammaInit;
+    result.residuals = residuals;
     result.fehist = fehist;
     result.time_elapsed = time_elapsed;
     result.select_start = select_start;
@@ -131,18 +132,19 @@ end
 
 fprintf('Training done');
 
+results_dir = strcat('/home/ting/Documents/eeg_hmm/HMM_results/results_K', num2str(K), '/');
 for idx = 1:n_of_files
     % Find the first non-duplicate filename
     fileindex = 0;
     result_filename_prefix = strcat(method, '_', output_filenames{idx});
     result_filename = strcat(result_filename_prefix, '_', num2str(fileindex), '.mat');
-    while isfile(strcat('results_K5/',result_filename))
+    while isfile(strcat(results_dir, result_filename))
         fileindex = fileindex + 1;
         result_filename = strcat(result_filename_prefix, '_', num2str(fileindex), '.mat');
     end
     
     result = results_list{idx};
-    save(strcat('results_K5/', result_filename), '-struct', 'result');
+    save(strcat(results_dir, result_filename), '-struct', 'result');
 end
 
 delete(gcp('nocreate'));
