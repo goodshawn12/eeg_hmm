@@ -101,7 +101,7 @@ alert_method_signrank_p = [method_pairs, p]
 %% Wilcoxon test on treatment K for all methods
 [x_coor, y_coor] = meshgrid(1:length(Ks), 1:length(Ks));
 x_coor = tril(x_coor, -1);
-y_coor = tril(y_coor, -1);s
+y_coor = tril(y_coor, -1);
 K_pairs = [x_coor(find(x_coor)), y_coor(find(y_coor))];
 
 [p,~,~] = mult_pair_signrank(drowsy_all, length(methods)*n_sessions, 1);
