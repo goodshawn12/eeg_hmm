@@ -11,21 +11,24 @@ function B = movingModeSmoothing(A, window_size, dim, values)
     end
     B = A;
     half_window = floor(window_size/2);
-    for index = 1:size(A, mod(dim,2)+1)
-        i = half_window + 1;
-        while i < size(A,dim)
-            window_start = i - half_window;
-            window_end = i + half_window;
+    
+    for index = 1:size(A, 3-dim)
+        j = half_window + 1;
+        slice = zeros(1, size(A, dim));
+        while j < size(A,dim)
+            window_start = j - half_window;
+            window_end = window_start + window_size - 1;
             if window_end > size(A, dim)
                 window_end = size(A, dim);
             end
             
             if dim == 1
-                B(i, index) = quickMode(A(window_start:window_end, index), values);
+                B(j, index) = quickMode(A(window_start:window_end, index), values);
             else
-                B(index, i) = quickMode(A(index, window_start:window_end), values);
+                B(index, j) = quickMode(A(index, window_start:window_end), values);
             end            
-            i = i + 1;
+            j = j + 1;
         end
     end
+    delete(gcp('nocreate')); % shut down any current pool
 end

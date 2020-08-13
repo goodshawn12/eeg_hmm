@@ -15,14 +15,14 @@ cd(resultsDir);
 % Selected sessions
 % data_filelist = [dir('GAU*m*1.mat');dir('GAU*ASR20*0.mat');dir('MAR*ASR20*0.mat')];
 % All session data
-data_filelist = dir(strcat(method, '*.mat'));
+data_filelist = dir(strcat(method, '*_2.mat'));
 
 filename_list = cell(length(data_filelist), 1);
 for i = 1:length(data_filelist)
     file = data_filelist(i);
-    if contains(file.name, 'ASR20')
+    if ~contains(file.name, 'ASR20')
         filename_list{i} = file.name;
-    end    
+    end
 end
 filename_list = filename_list(~cellfun('isempty', filename_list));
 filename_list = unique(filename_list, 'stable');
@@ -30,8 +30,6 @@ filename_list = unique(filename_list, 'stable');
 n_of_files = length(filename_list)
 
 %% Prepare raw data
-n_epochs = 1;
-
 session_name_list = cell(n_of_files,1);
 K_list = cell(n_of_files,1);
 epoch_length_list = cell(n_of_files,1);
@@ -42,10 +40,16 @@ hmm_list = cell(n_of_files,1);
 Fs_list = cell(n_of_files,1);
 Gamma_list = cell(n_of_files,1);
 vpath_list = cell(n_of_files,1);
-vars_to_load = {'hmm', 'training_data_size', 'select_start', 'select_end', 'Gamma', 'vpath'};
+fehist_list = cell(n_of_files,1);
+vars_to_load = {'hmm', 'training_data_size', 'select_start', 'select_end', 'Gamma', 'vpath', 'fehist'};
 
 for idx = 1:n_of_files
-    load(filename_list{idx}, vars_to_load{:});  
+    try
+        load(filename_list{idx}, vars_to_load{:});
+    catch error
+        disp(strcat('error loading', {' '}, filename_list{idx}));
+        continue;
+    end
     
     session_name = filename_list{idx};
     session_name = split(session_name, '.');
@@ -66,13 +70,32 @@ for idx = 1:n_of_files
     Fs_list{idx} = hmm.train.Fs;
     Gamma_list{idx} = Gamma;
     vpath_list{idx} = vpath;
+    fehist_list{idx} = fehist;
 end
 
+hmm.train
+
 results = table(filename_list, session_name_list, K_list, epoch_length_list, training_data_size_list, ...
-    timepoint_start_list, timepoint_end_list, Fs_list, hmm_list, Gamma_list, vpath_list);
+    timepoint_start_list, timepoint_end_list, Fs_list, hmm_list, Gamma_list, vpath_list, fehist_list);
 
 fprintf('Raw results data loaded.\n')
 
+%% Examine free energy history
+% isVisible = 'on';
+% final_fehist = zeros(n_of_files,1);
+% 
+% figure('Visible', isVisible);
+% for idx = 1:n_of_files
+%     fehist = real(results{idx, 'fehist_list'}{1});
+%     final_fehist(idx) = fehist(end);
+%     plot(fehist);
+%     hold on;
+% end
+% legend();
+% 
+% final_fehist
+% 
+% keyboard
 %% Load EEG related metadata
 events_list = cell(n_of_files, 1);
 chanlocs_list = cell(n_of_files, 1);
@@ -86,7 +109,7 @@ chanlocs_list = cell(n_of_files, 1);
 %     filename = strcat( filename{2}, '_', filename{3}, '.set')    
 %     load('-mat', filename); 
 %     events_list{idx} = EEG.event;
-% end
+% ends
 
 % For all sessions
 for idx = 1:n_of_files
@@ -240,7 +263,7 @@ fprintf('rt processing done.\n')
 %% Global state correlation with ERP
 state_r_list = zeros(n_of_files, K);
 trial_Gamma_mean_list = cell(n_of_files, 1);
-win_len_sec = 2;
+win_len_sec = 5;
 
 for idx = 1:n_of_files
     Fs = results{idx, 'Fs_list'}{1};
@@ -279,7 +302,7 @@ trial_Gamma_mean_list = cell(n_of_files, 1);
 smoothed_state_r_list = zeros(n_of_files, K);
 smoothed_Gamma_median_list = cell(n_of_files, 1);
 
-win_len_sec = 2;
+win_len_sec = 5;
 smoothing_range_sec = 90;
 
 for idx = 1:n_of_files
@@ -349,6 +372,8 @@ results = deleteVars(results, {'trial_Gamma_mean_list', 'state_r_list', 'permuta
 results = addvars(results, trial_Gamma_mean_list, state_r_list, permutation_list, inverse_permutation_list, ...
     smoothed_Gamma_median_list, smoothed_state_r_list, smoothed_permutation_list, smoothed_inverse_permutation_list);
 
+sort(results.smoothed_state_r_list,2)
+
 %% Global movmean correlation
 % movmean_state_r_list = zeros(n_of_files, K);
 % 
@@ -414,6 +439,20 @@ results = addvars(results, trial_Gamma_mean_list, state_r_list, permutation_list
 % results = deleteVars(results, {'trend_state_r_list', 'trend_inverse_permutation_list'});
 % results = addvars(results, trend_state_r_list, trend_inverse_permutation_list);
 
+%% Examine fractional occupancy
+fo_list = zeros(n_of_files, K);
+
+for idx = 1:n_of_files
+    Gamma = results{idx, 'Gamma_list'}{1};
+    permutation = results{idx, 'smoothed_permutation_list'};
+    
+    fo = mean(Gamma, 1);
+    fo_list(idx,:) = fo(permutation);
+end
+results = deleteVars(results, {'fo_list'});
+results = addvars(results, fo_list);
+fprintf('fractional  occupancy generated');
+
 %% Calculate overall state probability
 % overall_state_prob_list = zeros(n_of_files, K);
 % for idx = 1:n_of_files
@@ -433,9 +472,9 @@ smooth_90s = 1;
 
 % Preparation
 if smooth_90s
-    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/ten_session/90s_corr_smoothed_graphs_K%d', K);
+    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/90s_corr_smoothed_graphs_K%d', K);
 else
-    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/ten_session/graphs_K%d', K);
+    graphDir = sprintf('/home/ting/Documents/eeg_hmm/HMM_results/graphs_K%d', K);
 end
 if ~exist(graphDir, 'dir')
     mkdir(graphDir);
@@ -470,22 +509,22 @@ toSave = 0;
 visible = 'off';
 
 %% Smoothing vpath
-% delete(gcp('nocreate')); % shut down any current pool
-% npar = 27;
-% parpool(npar);   % request workers from the cluster
-% 
-% smoothing_window_len = 25;
-% smoothed_vpath_list = cell(n_of_files,1);
-% vpath_list = results.vpath_list;
-% 
-% parfor (idx = 1:n_of_files, npar)
-%     vpath = vpath_list{idx};
-%     smoothed_vpath_list{idx} = movingModeSmoothing(vpath, smoothing_window_len, 1, 1:K);
-% end
-% 
-% results = deleteVars(results, 'smoothed_vpath_list');
-% results = addvars(results, smoothed_vpath_list);
-% delete(gcp('nocreate'));
+delete(gcp('nocreate')); % shut down any current pool
+npar = 27;
+parpool(npar);   % request workers from the cluster
+
+smoothing_window_len = 25;
+smoothed_vpath_list = cell(n_of_files,1);
+vpath_list = results.vpath_list;
+
+parfor (idx = 1:n_of_files, npar)
+    vpath = vpath_list{idx};
+    smoothed_vpath_list{idx} = movingModeSmoothing(vpath, smoothing_window_len, 1, 1:K);
+end
+
+results = deleteVars(results, 'smoothed_vpath_list');
+results = addvars(results, smoothed_vpath_list);
+delete(gcp('nocreate'));
 
 %% Epoch Gamma by timelock
 Gamma_251_prior = cell(n_of_files, 1);
@@ -600,7 +639,7 @@ fprintf('Global Gamma and rt preparation done.\n')
 
 %% Global colormap Gamma timelock prior to event
 visible = 'on';
-toSave = 1;
+toSave = 0;
 
 n_of_epochs = size(sorted_global_Gamma_timelock,2);
 thick_line_width = 2;
@@ -636,7 +675,7 @@ fprintf('Global Gamma prior to 251 timelock plots done.\n')
 
 %% Global colormap of state Gamma timelock to events
 visible = 'on';
-toSave = 1;
+toSave = 0;
 
 n_of_epochs = size(sorted_global_Gamma_timelock,2);
 thick_line_width = 2;
@@ -1040,7 +1079,7 @@ fprintf('timelock vpath plots done.\n')
 visible = 'on';
 toSave = 0;
 smooth_90s = 1;
-for idx = 1:n_of_files
+for idx = 9
     Fs = results{idx, 'Fs_list'}{1};
     Gamma = results{idx, 'Gamma_list'}{1};
     rt = results{idx, 'rt_clean_list'}{1};
@@ -1145,13 +1184,14 @@ fprintf('vpath plot done.\n')
 % t = uitable('Data', results.overall_state_prob_list, 'ColumnName', {'State 1', 'State 2', 'State 3'}, 'RowName', results.filename_list);
 % t.Position(3:4) = t.Extent(3:4);
 
-%% Plot state timepath with trend analysis
-visible = 'off';
-toSave = 1;
+%% Plot state timepath with trend
+visible = 'on';
+toSave = 0;
 smooth_90s = 1;
-for idx = 1:n_of_files
+for idx = 11 %1:n_of_files
     Fs = results{idx, 'Fs_list'}{1};
     Gamma = results{idx, 'Gamma_list'}{1};
+    vpath = results{idx, 'vpath_list'}{1};
     rt = results{idx, 'rt_clean_list'}{1};
     rt_latency = results{idx, 'rt_latency_clean_list'}{1};
     rt_speed = results{idx, 'rt_speed_clean_list'}{1};
@@ -1760,7 +1800,43 @@ if toSave
     print(strcat(method,'_K',num2str(K),'_meanCorrmat_smoothed'), '-djpeg')
 end
 
+%% Examine Gaussian distribution means
+figure;
+for idx = 1:n_of_files
+    hmm = results{idx, 'hmm_list'}{1};
+    permutation = results{idx, 'permutation_list'};
+    n_chan = length(results{idx, 'chanlocs_list'}{1});
+    
+    mean_arr = zeros(K, n_chan);
+    
+    for i = 1:K
+        state = permutation(i);
+        mean_arr(i,:) = getMean(hmm, state);
+    end
+    
+    subplot(6, 5, idx);
+    imagesc(mean_arr);
+end
 
+%% Examine fractional occupancy
+for idx = 9    
+    Gamma = results{idx, 'Gamma_list'}{1};
+    T = results{idx, 'epoch_length_list'}{1};
+    hmm = results{idx, 'hmm_list'}{1};
+    
+    fracOccup = getFractionalOccupancy(Gamma, T, hmm.train) % simply Gamma mean
+    switchingRate = getSwitchingRate(Gamma, T, hmm.train) % total sum of diff(Gamma)
+    tic
+    stateLifeTimes = getStateLifeTimes(Gamma, T, hmm.train)
+    stateIntervalTimes = getStateIntervalTimes(Gamma, T, hmm.train) 
+    toc
+    maxFracOccup = getMaxFractionalOccupancy(Gamma, T, hmm.train)
+%     figure;
+%     imagesc(fracOccup')    
+    
+end
+
+%% Examine 
 
 
 

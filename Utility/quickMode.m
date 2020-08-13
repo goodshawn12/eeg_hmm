@@ -1,4 +1,4 @@
-function [mode] = quickMode(data, values)
+function mode = quickMode(data, values)
 %QUICKMODE Summary of this function goes here
 %   Detailed explanation goes here
     count = zeros(size(values));

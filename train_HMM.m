@@ -5,8 +5,8 @@ addpath('/data/projects/Shawn/2019_HMM/data')
 addpath('/data/projects/Shawn/2016 JNE/dataset')
 
 %% Indexing datafile
-% data_base_dir = '/data/projects/Shawn/2019_HMM/data/';
-data_base_dir = '/data/projects/Shawn/2016 JNE/dataset/';
+data_base_dir = '/data/projects/Shawn/2019_HMM/data/';
+% data_base_dir = '/data/projects/Shawn/2016 JNE/dataset/';
 
 data_filelist = dir(strcat(data_base_dir, '*.set'));
 data_filenames = {};
@@ -15,9 +15,11 @@ for i = 1:length(data_filelist)
     filename = data_filelist(i).name;
     output_filename = split(filename, '.');
     output_filename = output_filename{1};
-      
-    data_filenames{i} = filename;
-    output_filenames{i} = output_filename;
+    
+    if ismember(output_filename, {'s54_081209n'})
+        data_filenames{i} = filename;
+        output_filenames{i} = output_filename;
+    end    
 end
 
 data_filenames = data_filenames(~cellfun('isempty', data_filenames));
@@ -41,9 +43,9 @@ select_start = 0;
 select_end = 1;
 Fs = 250;
 
-K = 3; 
+K = 10;
 use_stochastic = 0;
-method = 'MAR';
+method = 'GAU';
 
 % cyc = 1000;
 % tol = 1e-5;
@@ -64,24 +66,32 @@ options.onpower = 0;
 % options.initcyc = initcycle;
 
 if strcmp(method,'MAR')
-    options.order = 1;
+    options.order = 2;
     options.zeromean = 1;
     options.covtype = 'diag';
-    options.DirichletDiag = 1000;
+    options.DirichletDiag = 100;
+elseif strcmp(method, 'crossMAR')
+    options.order = 1;
+    options.zeromean = 1;
+    options.covtype = 'uniquefull';
+    options.DirichletDiag = 100;
 elseif strcmp(method, 'TDE')
     % For TDE: order = 0, zeromean = 1, covtype = 'full'
     options.embeddedlags = -7:7;
     options.order = 0; % no autoregressive components
-    options.zeromean = 0; % model the mean
+    options.zeromean = 1; % model the mean
     options.covtype = 'full'; % full covariance matrix
 elseif strcmp(method, 'GAU')
     options.order = 0;
     options.zeromean = 0;
-    options.covtype = 'full';     
-    options.onpower = 1;
+    options.covtype = 'full';
+    options.onpower = 0;
+    options.DirichletDiag = 100;
 elseif strcmp(method, 'MIX')
     % default
 end
+
+options.DirichletDiag = 100;
 
 if use_stochastic && n_epochs > 1
     options.BIGNinitbatch = 15;
@@ -96,7 +106,7 @@ end
 
 %% Train
 delete(gcp('nocreate')); % shut down any current pool
-npar = 10;
+npar = 27;
 parpool(npar);   % request workers from the cluster
 
 options_list = repmat(options, 1, n_of_files);
@@ -109,17 +119,17 @@ parfor (idx = 1:n_of_files, npar)
     options_list(idx).Fs = Fs;
     
     start_time = tic;
-    [hmm, Gamma, Xi, vpath, GammaInit, residuals, fehist] = hmmmar(X, T, options_list(idx));
+    [hmm, Gamma, ~, vpath, ~, residuals, fehist] = hmmmar(X, T, options_list(idx));
     time_elapsed = toc(start_time)
 
     % save output and meta data
     result = struct();
     result.hmm = hmm;
     result.Gamma = Gamma;
-    result.Xi = Xi;
+%     result.Xi = Xi;
     result.vpath = vpath;
     result.fehist = fehist;
-    result.GammaInit = GammaInit;
+%     result.GammaInit = GammaInit;
     result.residuals = residuals;
     result.fehist = fehist;
     result.time_elapsed = time_elapsed;
@@ -133,6 +143,10 @@ end
 fprintf('Training done');
 
 results_dir = strcat('/home/ting/Documents/eeg_hmm/HMM_results/results_K', num2str(K), '/');
+if ~exist(results_dir, 'dir')
+    mkdir(results_dir);
+end
+
 for idx = 1:n_of_files
     % Find the first non-duplicate filename
     fileindex = 0;

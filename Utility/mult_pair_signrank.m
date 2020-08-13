@@ -5,9 +5,9 @@ function [p, h, stats] = mult_pair_signrank(data, n_entries, dim)
     if mod(size(data,1), n_entries) ~= 0
         error('Data along the selected dimension cannot be split evenly by rept times')
     end
-    if size(data, 3-dim) < 2
-        eroor('Need at least two groups to do paired sign rank test')
-    end
+%     if size(data, 3-dim) < 2
+%         eroor('Need at least two groups to do paired sign rank test')
+%     end
     
     if dim == 1
         rept = size(data, 1) / n_entries;

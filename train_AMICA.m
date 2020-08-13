@@ -21,7 +21,7 @@ output_filenames = output_filenames(~cellfun('isempty', output_filenames));
 n_of_files = length(data_filenames);
 
 %% Train
-K = 5;
+K = 7;
 
 for idx = 1:n_of_files
     filename = data_filenames{idx};
@@ -36,7 +36,6 @@ for idx = 1:n_of_files
 end
 
 fprintf('Training done');
-
 
 %%
 % eeglab
