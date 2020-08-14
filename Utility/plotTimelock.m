@@ -5,7 +5,7 @@ function [] = plotTimelock(axe, event, state_by_epoch, start_offset, Fs, win_len
     thick = 2;
     thin = 0.01;
 
-    if any(state_by_epoch == 0)
+    if ismember(0, state_by_epoch)
         cmap = [1,1,1; cmap];
     end
     

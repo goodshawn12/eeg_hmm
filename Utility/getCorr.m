@@ -1,4 +1,4 @@
-function [correlation] = getCorr(Gamma, K, Fs, rs, rt_latency, win_len_sec, smoothing_range_sec)
+function [correlation, win_Gamma_median] = getCorr(Gamma, K, Fs, rs, rt_latency, win_len_sec, smoothing_range_sec)
     win_offset = -win_len_sec * Fs;
     win_Gamma_mean = zeros(length(rt_latency), K);    
     for row = 1:length(win_Gamma_mean)
@@ -24,14 +24,14 @@ function [correlation] = getCorr(Gamma, K, Fs, rs, rt_latency, win_len_sec, smoo
         facing_trial_num_list(trial) = facing_trial_num;
     end
     
-    Gamma_median = zeros(length(rt_latency), K);
-    for row = 1:length(Gamma_median)
+    win_Gamma_median = zeros(length(rt_latency), K);
+    for row = 1:length(win_Gamma_median)
         trials_selection = (row - facing_trial_num_list(row)):row;
-        Gamma_median(row, :) = median(win_Gamma_mean(trials_selection,:), 1);
+        win_Gamma_median(row, :) = median(win_Gamma_mean(trials_selection,:), 1);
     end    
   
     correlation = zeros(1, K);
     for state = 1:K
-        correlation(state) = corr(Gamma_median(:, state), rs');
+        correlation(state) = corr(win_Gamma_median(:, state), rs');
     end
 end

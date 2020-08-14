@@ -16,7 +16,7 @@ function [rt, rt_off, rt_latency, rs, event_sparsity] = rtFromEvents(events, Fs,
             rt_latency(i) = event.latency;
             rt(i) = events(i+1).latency - event.latency;
             rt_off(i) = events(i+2).latency - event.latency;
-            rs(i) = 1./(rt(i)/Fs); %rt_speed is in (1/seconds)
+            rs(i) = 1/(rt(i)/Fs); %rt_speed is in (1/seconds)
             
             if ~isnan(prev_offset)
                 event_sparsity(i) = event.latency - prev_offset;
